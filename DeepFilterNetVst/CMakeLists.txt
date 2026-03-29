@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(DeepFilterNetVst2 VERSION 0.1.0 LANGUAGES C CXX RC)
+project(DeepFilterNetVst VERSION 0.1.0 LANGUAGES C CXX RC)
 
 set(JUCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../extern/JUCE" CACHE PATH "Path to the JUCE repository")
 set(FST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../extern/FST" CACHE PATH "Path to the FST repository")
@@ -44,9 +44,9 @@ add_subdirectory("${JUCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/JUCE")
 
 juce_set_vst2_sdk_path("${VST2_SDK_COMPAT_DIR}")
 
-juce_add_plugin(DeepFilterNetVst2
+juce_add_plugin(DeepFilterNetVst
   COMPANY_NAME "DeepFilterNet"
-  BUNDLE_ID "local.deepfilternet.vst2"
+  BUNDLE_ID "local.deepfilternet.plugin"
   IS_SYNTH FALSE
   NEEDS_MIDI_INPUT FALSE
   NEEDS_MIDI_OUTPUT FALSE
@@ -54,15 +54,16 @@ juce_add_plugin(DeepFilterNetVst2
   COPY_PLUGIN_AFTER_BUILD FALSE
   EDITOR_WANTS_KEYBOARD_FOCUS FALSE
   PLUGIN_MANUFACTURER_CODE Dfnt
-  PLUGIN_CODE Dfv2
-  FORMATS VST
-  PRODUCT_NAME "DeepFilterNet VST2"
+  PLUGIN_CODE Dfvt
+  FORMATS VST VST3
+  PRODUCT_NAME "DeepFilterNet"
   VST2_CATEGORY kPlugCategEffect
+  VST3_CATEGORIES Fx
 )
 
-juce_generate_juce_header(DeepFilterNetVst2)
+juce_generate_juce_header(DeepFilterNetVst)
 
-target_sources(DeepFilterNetVst2
+target_sources(DeepFilterNetVst
   PRIVATE
     DenoiseEngine.cpp
     DenoiseEngine.h
@@ -75,22 +76,36 @@ target_sources(DeepFilterNetVst2
     RuntimeAssets.h
 )
 
-target_include_directories(DeepFilterNetVst2
+target_include_directories(DeepFilterNetVst
   PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
 )
 
-target_sources(DeepFilterNetVst2_VST
-  PRIVATE
-    "${CMAKE_CURRENT_BINARY_DIR}/EmbeddedResources.rc"
-)
+if(TARGET DeepFilterNetVst_VST)
+  target_sources(DeepFilterNetVst_VST
+    PRIVATE
+      "${CMAKE_CURRENT_BINARY_DIR}/EmbeddedResources.rc"
+  )
 
-target_include_directories(DeepFilterNetVst2_VST
-  PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}"
-)
+  target_include_directories(DeepFilterNetVst_VST
+    PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}"
+  )
+endif()
 
-target_compile_definitions(DeepFilterNetVst2
+if(TARGET DeepFilterNetVst_VST3)
+  target_sources(DeepFilterNetVst_VST3
+    PRIVATE
+      "${CMAKE_CURRENT_BINARY_DIR}/EmbeddedResources.rc"
+  )
+
+  target_include_directories(DeepFilterNetVst_VST3
+    PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}"
+  )
+endif()
+
+target_compile_definitions(DeepFilterNetVst
   PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
@@ -98,7 +113,7 @@ target_compile_definitions(DeepFilterNetVst2
     JUCE_REPORT_APP_USAGE=0
 )
 
-target_link_libraries(DeepFilterNetVst2
+target_link_libraries(DeepFilterNetVst
   PRIVATE
     juce::juce_audio_utils
   PUBLIC
@@ -107,7 +122,7 @@ target_link_libraries(DeepFilterNetVst2
     juce::juce_recommended_warning_flags
 )
 
-set_target_properties(DeepFilterNetVst2 PROPERTIES
+set_target_properties(DeepFilterNetVst PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED YES
   CXX_EXTENSIONS NO

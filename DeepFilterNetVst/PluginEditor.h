@@ -4,12 +4,12 @@
 
 #include <JuceHeader.h>
 
-class DeepFilterNetVst2AudioProcessorEditor final : public juce::AudioProcessorEditor,
+class DeepFilterNetVstAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                                     private juce::Timer
 {
 public:
-    explicit DeepFilterNetVst2AudioProcessorEditor(DeepFilterNetVst2AudioProcessor&);
-    ~DeepFilterNetVst2AudioProcessorEditor() override;
+    explicit DeepFilterNetVstAudioProcessorEditor(DeepFilterNetVstAudioProcessor&);
+    ~DeepFilterNetVstAudioProcessorEditor() override;
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -36,7 +36,7 @@ private:
     void updateStatusLabel();
     void configureSlider(juce::Slider& slider, juce::Label& label, const juce::String& title);
 
-    DeepFilterNetVst2AudioProcessor& processor_;
+    DeepFilterNetVstAudioProcessor& processor_;
     AccentLookAndFeel lookAndFeel_;
 
     juce::Label titleLabel_;

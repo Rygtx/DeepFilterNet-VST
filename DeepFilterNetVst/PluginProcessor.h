@@ -4,11 +4,11 @@
 
 #include <JuceHeader.h>
 
-class DeepFilterNetVst2AudioProcessor final : public juce::AudioProcessor
+class DeepFilterNetVstAudioProcessor final : public juce::AudioProcessor
 {
 public:
-    DeepFilterNetVst2AudioProcessor();
-    ~DeepFilterNetVst2AudioProcessor() override;
+    DeepFilterNetVstAudioProcessor();
+    ~DeepFilterNetVstAudioProcessor() override;
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;

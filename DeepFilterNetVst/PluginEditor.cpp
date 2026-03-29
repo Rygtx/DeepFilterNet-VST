@@ -12,14 +12,14 @@ const auto textStrong = juce::Colour::fromRGB(41, 34, 29);
 const auto textMuted = juce::Colour::fromRGB(108, 96, 85);
 }
 
-DeepFilterNetVst2AudioProcessorEditor::AccentLookAndFeel::AccentLookAndFeel()
+DeepFilterNetVstAudioProcessorEditor::AccentLookAndFeel::AccentLookAndFeel()
 {
     setColour(juce::Slider::thumbColourId, accent);
     setColour(juce::Slider::trackColourId, accent);
     setColour(juce::Slider::backgroundColourId, accentSoft.withAlpha(0.45f));
 }
 
-void DeepFilterNetVst2AudioProcessorEditor::AccentLookAndFeel::drawLinearSlider(
+void DeepFilterNetVstAudioProcessorEditor::AccentLookAndFeel::drawLinearSlider(
     juce::Graphics& graphics,
     int x,
     int y,
@@ -50,11 +50,11 @@ void DeepFilterNetVst2AudioProcessorEditor::AccentLookAndFeel::drawLinearSlider(
     graphics.drawEllipse(thumb, 1.5f);
 }
 
-DeepFilterNetVst2AudioProcessorEditor::DeepFilterNetVst2AudioProcessorEditor(DeepFilterNetVst2AudioProcessor& processor)
+DeepFilterNetVstAudioProcessorEditor::DeepFilterNetVstAudioProcessorEditor(DeepFilterNetVstAudioProcessor& processor)
     : AudioProcessorEditor(&processor),
       processor_(processor),
-      denoiseAttachment_(processor_.getParametersState(), DeepFilterNetVst2AudioProcessor::attenParamId, denoiseSlider_),
-      postAttachment_(processor_.getParametersState(), DeepFilterNetVst2AudioProcessor::postParamId, postSlider_)
+      denoiseAttachment_(processor_.getParametersState(), DeepFilterNetVstAudioProcessor::attenParamId, denoiseSlider_),
+      postAttachment_(processor_.getParametersState(), DeepFilterNetVstAudioProcessor::postParamId, postSlider_)
 {
     setLookAndFeel(&lookAndFeel_);
     setSize(460, 320);
@@ -93,12 +93,12 @@ DeepFilterNetVst2AudioProcessorEditor::DeepFilterNetVst2AudioProcessorEditor(Dee
     startTimerHz(6);
 }
 
-DeepFilterNetVst2AudioProcessorEditor::~DeepFilterNetVst2AudioProcessorEditor()
+DeepFilterNetVstAudioProcessorEditor::~DeepFilterNetVstAudioProcessorEditor()
 {
     setLookAndFeel(nullptr);
 }
 
-void DeepFilterNetVst2AudioProcessorEditor::paint(juce::Graphics& graphics)
+void DeepFilterNetVstAudioProcessorEditor::paint(juce::Graphics& graphics)
 {
     juce::ColourGradient background(backgroundTop, 0.0f, 0.0f, backgroundBottom, 0.0f, static_cast<float>(getHeight()), false);
     graphics.setGradientFill(background);
@@ -123,10 +123,10 @@ void DeepFilterNetVst2AudioProcessorEditor::paint(juce::Graphics& graphics)
     graphics.fillRoundedRectangle(badgeBounds.toFloat(), 12.0f);
     graphics.setColour(accent);
     graphics.setFont(juce::FontOptions(13.0f, juce::Font::bold));
-    graphics.drawFittedText("VST2", badgeBounds, juce::Justification::centred, 1);
+    graphics.drawFittedText("VST", badgeBounds, juce::Justification::centred, 1);
 }
 
-void DeepFilterNetVst2AudioProcessorEditor::resized()
+void DeepFilterNetVstAudioProcessorEditor::resized()
 {
     titleLabel_.setBounds(28, 18, getWidth() - 56, 34);
     subtitleLabel_.setBounds(30, 50, getWidth() - 120, 20);
@@ -146,18 +146,18 @@ void DeepFilterNetVst2AudioProcessorEditor::resized()
     statusLabel_.setBounds(30, 282, getWidth() - 60, 30);
 }
 
-void DeepFilterNetVst2AudioProcessorEditor::timerCallback()
+void DeepFilterNetVstAudioProcessorEditor::timerCallback()
 {
     updateStatusLabel();
 }
 
-void DeepFilterNetVst2AudioProcessorEditor::updateValueLabels()
+void DeepFilterNetVstAudioProcessorEditor::updateValueLabels()
 {
     denoiseValueLabel_.setText(juce::String(denoiseSlider_.getValue(), 0) + " dB", juce::dontSendNotification);
     postValueLabel_.setText(juce::String(postSlider_.getValue(), 3), juce::dontSendNotification);
 }
 
-void DeepFilterNetVst2AudioProcessorEditor::updateStatusLabel()
+void DeepFilterNetVstAudioProcessorEditor::updateStatusLabel()
 {
     if (processor_.getCurrentSampleRateHz() <= 0.0)
     {
@@ -178,7 +178,7 @@ void DeepFilterNetVst2AudioProcessorEditor::updateStatusLabel()
                          juce::dontSendNotification);
 }
 
-void DeepFilterNetVst2AudioProcessorEditor::configureSlider(juce::Slider& slider, juce::Label& label, const juce::String& title)
+void DeepFilterNetVstAudioProcessorEditor::configureSlider(juce::Slider& slider, juce::Label& label, const juce::String& title)
 {
     slider.setSliderStyle(juce::Slider::LinearHorizontal);
     slider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
@@ -190,3 +190,4 @@ void DeepFilterNetVst2AudioProcessorEditor::configureSlider(juce::Slider& slider
     label.setColour(juce::Label::textColourId, textStrong);
     addAndMakeVisible(label);
 }
+

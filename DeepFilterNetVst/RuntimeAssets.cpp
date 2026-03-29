@@ -49,7 +49,7 @@ juce::File buildRuntimeRootDirectory()
         + juce::String(moduleFile.getLastModificationTime().toMilliseconds());
 
     return juce::File::getSpecialLocation(juce::File::tempDirectory)
-        .getChildFile("DeepFilterNetVst2")
+        .getChildFile("DeepFilterNetVst")
         .getChildFile(versionedName);
 }
 

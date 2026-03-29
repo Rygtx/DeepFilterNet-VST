@@ -8,7 +8,7 @@ namespace
 constexpr double targetSampleRate = 48000.0;
 }
 
-DeepFilterNetVst2AudioProcessor::DeepFilterNetVst2AudioProcessor()
+DeepFilterNetVstAudioProcessor::DeepFilterNetVstAudioProcessor()
     : AudioProcessor(BusesProperties()
                          .withInput("Input", juce::AudioChannelSet::stereo(), true)
                          .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
@@ -18,9 +18,9 @@ DeepFilterNetVst2AudioProcessor::DeepFilterNetVst2AudioProcessor()
     postFilterBetaParam_ = parameters_.getRawParameterValue(postParamId);
 }
 
-DeepFilterNetVst2AudioProcessor::~DeepFilterNetVst2AudioProcessor() = default;
+DeepFilterNetVstAudioProcessor::~DeepFilterNetVstAudioProcessor() = default;
 
-void DeepFilterNetVst2AudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
+void DeepFilterNetVstAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     engine_.setSampleRate(sampleRate);
     engine_.setMaximumBlockSize(samplesPerBlock);
@@ -28,13 +28,13 @@ void DeepFilterNetVst2AudioProcessor::prepareToPlay(double sampleRate, int sampl
     setLatencySamples(engine_.getLatencySamples());
 }
 
-void DeepFilterNetVst2AudioProcessor::releaseResources()
+void DeepFilterNetVstAudioProcessor::releaseResources()
 {
     engine_.release();
     setLatencySamples(0);
 }
 
-bool DeepFilterNetVst2AudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
+bool DeepFilterNetVstAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
 {
     const auto input = layouts.getMainInputChannelSet();
     const auto output = layouts.getMainOutputChannelSet();
@@ -45,7 +45,7 @@ bool DeepFilterNetVst2AudioProcessor::isBusesLayoutSupported(const BusesLayout& 
     return output == juce::AudioChannelSet::mono() || output == juce::AudioChannelSet::stereo();
 }
 
-void DeepFilterNetVst2AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
+void DeepFilterNetVstAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     juce::ignoreUnused(midiMessages);
     juce::ScopedNoDenormals noDenormals;
@@ -60,74 +60,74 @@ void DeepFilterNetVst2AudioProcessor::processBlock(juce::AudioBuffer<float>& buf
     setLatencySamples(engine_.getLatencySamples());
 }
 
-juce::AudioProcessorEditor* DeepFilterNetVst2AudioProcessor::createEditor()
+juce::AudioProcessorEditor* DeepFilterNetVstAudioProcessor::createEditor()
 {
-    return new DeepFilterNetVst2AudioProcessorEditor(*this);
+    return new DeepFilterNetVstAudioProcessorEditor(*this);
 }
 
-bool DeepFilterNetVst2AudioProcessor::hasEditor() const
+bool DeepFilterNetVstAudioProcessor::hasEditor() const
 {
     return true;
 }
 
-const juce::String DeepFilterNetVst2AudioProcessor::getName() const
+const juce::String DeepFilterNetVstAudioProcessor::getName() const
 {
     return JucePlugin_Name;
 }
 
-bool DeepFilterNetVst2AudioProcessor::acceptsMidi() const
+bool DeepFilterNetVstAudioProcessor::acceptsMidi() const
 {
     return false;
 }
 
-bool DeepFilterNetVst2AudioProcessor::producesMidi() const
+bool DeepFilterNetVstAudioProcessor::producesMidi() const
 {
     return false;
 }
 
-bool DeepFilterNetVst2AudioProcessor::isMidiEffect() const
+bool DeepFilterNetVstAudioProcessor::isMidiEffect() const
 {
     return false;
 }
 
-double DeepFilterNetVst2AudioProcessor::getTailLengthSeconds() const
+double DeepFilterNetVstAudioProcessor::getTailLengthSeconds() const
 {
     return 0.0;
 }
 
-int DeepFilterNetVst2AudioProcessor::getNumPrograms()
+int DeepFilterNetVstAudioProcessor::getNumPrograms()
 {
     return 1;
 }
 
-int DeepFilterNetVst2AudioProcessor::getCurrentProgram()
+int DeepFilterNetVstAudioProcessor::getCurrentProgram()
 {
     return 0;
 }
 
-void DeepFilterNetVst2AudioProcessor::setCurrentProgram(int index)
+void DeepFilterNetVstAudioProcessor::setCurrentProgram(int index)
 {
     juce::ignoreUnused(index);
 }
 
-const juce::String DeepFilterNetVst2AudioProcessor::getProgramName(int index)
+const juce::String DeepFilterNetVstAudioProcessor::getProgramName(int index)
 {
     juce::ignoreUnused(index);
     return "Default";
 }
 
-void DeepFilterNetVst2AudioProcessor::changeProgramName(int index, const juce::String& newName)
+void DeepFilterNetVstAudioProcessor::changeProgramName(int index, const juce::String& newName)
 {
     juce::ignoreUnused(index, newName);
 }
 
-void DeepFilterNetVst2AudioProcessor::getStateInformation(juce::MemoryBlock& destData)
+void DeepFilterNetVstAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
     if (const auto xml = parameters_.copyState().createXml())
         copyXmlToBinary(*xml, destData);
 }
 
-void DeepFilterNetVst2AudioProcessor::setStateInformation(const void* data, int sizeInBytes)
+void DeepFilterNetVstAudioProcessor::setStateInformation(const void* data, int sizeInBytes)
 {
     const auto xmlState = getXmlFromBinary(data, sizeInBytes);
     if (xmlState == nullptr)
@@ -139,27 +139,27 @@ void DeepFilterNetVst2AudioProcessor::setStateInformation(const void* data, int 
     parameters_.replaceState(juce::ValueTree::fromXml(*xmlState));
 }
 
-juce::AudioProcessorValueTreeState& DeepFilterNetVst2AudioProcessor::getParametersState()
+juce::AudioProcessorValueTreeState& DeepFilterNetVstAudioProcessor::getParametersState()
 {
     return parameters_;
 }
 
-double DeepFilterNetVst2AudioProcessor::getCurrentSampleRateHz() const
+double DeepFilterNetVstAudioProcessor::getCurrentSampleRateHz() const
 {
     return getSampleRate();
 }
 
-bool DeepFilterNetVst2AudioProcessor::isSampleRateCompatible() const
+bool DeepFilterNetVstAudioProcessor::isSampleRateCompatible() const
 {
     return std::abs(getCurrentSampleRateHz() - targetSampleRate) <= 1.0;
 }
 
-bool DeepFilterNetVst2AudioProcessor::isDenoiserReady() const
+bool DeepFilterNetVstAudioProcessor::isDenoiserReady() const
 {
     return engine_.isReady();
 }
 
-juce::AudioProcessorValueTreeState::ParameterLayout DeepFilterNetVst2AudioProcessor::createParameterLayout()
+juce::AudioProcessorValueTreeState::ParameterLayout DeepFilterNetVstAudioProcessor::createParameterLayout()
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> parameters;
 
@@ -190,5 +190,5 @@ juce::AudioProcessorValueTreeState::ParameterLayout DeepFilterNetVst2AudioProces
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
-    return new DeepFilterNetVst2AudioProcessor();
+    return new DeepFilterNetVstAudioProcessor();
 }
