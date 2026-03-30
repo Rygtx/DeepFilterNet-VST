@@ -4,8 +4,7 @@
 
 #include <JuceHeader.h>
 
-class DeepFilterNetVstAudioProcessorEditor final : public juce::AudioProcessorEditor,
-                                                    private juce::Timer
+class DeepFilterNetVstAudioProcessorEditor final : public juce::AudioProcessorEditor
 {
 public:
     explicit DeepFilterNetVstAudioProcessorEditor(DeepFilterNetVstAudioProcessor&);
@@ -53,13 +52,18 @@ private:
                                const juce::Drawable* icon,
                                const juce::Colour* textColour) override;
         juce::Font getPopupMenuFont() override;
+        void drawButtonBackground(juce::Graphics&, juce::Button&, const juce::Colour&, bool, bool) override;
+        juce::Font getTextButtonFont(juce::TextButton&, int buttonHeight) override;
     };
 
-    void timerCallback() override;
+    class DiagnosticWindow;
+
     void updateValueLabels();
-    void updateStatusLabel();
     void configureSlider(juce::Slider& slider, juce::Label& label, const juce::String& title);
     void configureComboBox(juce::ComboBox& comboBox, juce::Label& label, const juce::String& title);
+    void configureButton(juce::TextButton& button, const juce::String& text);
+    void showDiagnosticWindow();
+    void closeDiagnosticWindow();
 
     DeepFilterNetVstAudioProcessor& processor_;
     AccentLookAndFeel lookAndFeel_;
@@ -71,15 +75,16 @@ private:
     juce::Label postLabel_;
     juce::Label postValueLabel_;
     juce::Label reduceMaskLabel_;
-    juce::Label statusLabel_;
 
     juce::Slider denoiseSlider_;
     juce::Slider postSlider_;
     juce::ComboBox reduceMaskComboBox_;
+    juce::TextButton diagnosticButton_;
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ComboBoxAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
     SliderAttachment denoiseAttachment_;
     SliderAttachment postAttachment_;
     std::unique_ptr<ComboBoxAttachment> reduceMaskAttachment_;
+    std::unique_ptr<DiagnosticWindow> diagnosticWindow_;
 };

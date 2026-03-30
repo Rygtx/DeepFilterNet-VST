@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 # 插件版本固定由源码文件维护；如需升级版本，请直接修改这里。
-set(DEEPFILTERNET_PLUGIN_VERSION "2026.3.29.2")
+set(DEEPFILTERNET_PLUGIN_VERSION "2026.3.31.1")
 
 if(NOT DEEPFILTERNET_PLUGIN_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$")
   message(FATAL_ERROR "DEEPFILTERNET_PLUGIN_VERSION must use the numeric format YYYY.M.D.N, e.g. 2026.3.29.1")

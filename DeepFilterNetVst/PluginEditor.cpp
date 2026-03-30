@@ -21,6 +21,260 @@ juce::String utf8Text(const char* text)
 {
     return juce::String::fromUTF8(text);
 }
+
+class DiagnosticContent final : public juce::Component,
+                                private juce::Timer
+{
+public:
+    static constexpr int preferredWidth = 560;
+
+    explicit DiagnosticContent(DeepFilterNetVstAudioProcessor& processor)
+        : processor_(processor)
+    {
+        viewport_.setViewedComponent(&display_, false);
+        viewport_.setScrollBarsShown(false, false, false, false);
+        addAndMakeVisible(viewport_);
+
+        refresh();
+        updatePreferredSize();
+        startTimerHz(4);
+    }
+
+    void resized() override
+    {
+        viewport_.setBounds(getLocalBounds().reduced(14));
+        updateDisplayLayout();
+    }
+
+    int getPreferredHeight() const
+    {
+        return getContentHeightForWidth(preferredWidth);
+    }
+
+private:
+    class DiagnosticDisplay final : public juce::Component
+    {
+    public:
+        void setDiagnosticText(const juce::String& text)
+        {
+            if (text == text_)
+                return;
+
+            text_ = text;
+            parseDiagnosticText();
+            repaint();
+        }
+
+        int getPreferredHeight(int width) const
+        {
+            juce::ignoreUnused(width);
+            constexpr int headerHeight = 54;
+            constexpr int cardTopPadding = 58;
+            constexpr int cardBottomPadding = 24;
+            constexpr int rowHeight = 30;
+            const auto baseCardHeight = cardTopPadding + cardBottomPadding;
+            const auto localHeight = sections_.size() > 0
+                                         ? baseCardHeight + static_cast<int>(sections_[0].entries.size()) * rowHeight
+                                         : baseCardHeight;
+            const auto sharedHeight = sections_.size() > 1
+                                          ? baseCardHeight + static_cast<int>(sections_[1].entries.size()) * rowHeight
+                                          : baseCardHeight;
+
+            return 28 + headerHeight + 18 + juce::jmax(localHeight, sharedHeight) + 24;
+        }
+
+        void paint(juce::Graphics& graphics) override
+        {
+            graphics.fillAll(juce::Colours::transparentBlack);
+
+            const auto outerBounds = getLocalBounds().toFloat().reduced(2.0f);
+            const auto maxCardWidth = 620.0f;
+            auto bounds = outerBounds;
+
+            if (bounds.getWidth() > maxCardWidth)
+                bounds = juce::Rectangle<float>(maxCardWidth, bounds.getHeight()).withCentre(outerBounds.getCentre());
+
+            auto area = bounds.toNearestInt().reduced(10, 10);
+
+            graphics.setColour(accent);
+            graphics.setFont(juce::FontOptions("Microsoft YaHei", 22.0f, juce::Font::bold));
+            graphics.drawText(utf8Text("运行信息"), area.removeFromTop(34), juce::Justification::centredLeft, false);
+
+            area.removeFromTop(6);
+
+            auto cardsArea = area;
+            constexpr int cardGap = 10;
+            const auto cardWidth = (cardsArea.getWidth() - cardGap) / 2;
+            const auto leftCardHeight = getSectionCardHeight(sections_.size() > 0 ? sections_[0] : DiagnosticSection{ utf8Text("本地实例"), {} });
+            const auto rightCardHeight = getSectionCardHeight(sections_.size() > 1 ? sections_[1] : DiagnosticSection{ utf8Text("共享实例"), {} });
+            const auto cardHeight = juce::jmax(leftCardHeight, rightCardHeight);
+
+            auto leftCard = cardsArea.removeFromLeft(cardWidth).withHeight(cardHeight);
+            cardsArea.removeFromLeft(cardGap);
+            auto rightCard = cardsArea.withHeight(cardHeight);
+
+            paintSectionCard(graphics, leftCard, sections_.size() > 0 ? sections_[0] : DiagnosticSection{ utf8Text("本地实例"), {} });
+            paintSectionCard(graphics, rightCard, sections_.size() > 1 ? sections_[1] : DiagnosticSection{ utf8Text("共享实例"), {} });
+        }
+
+    private:
+        struct DiagnosticEntry
+        {
+            juce::String key;
+            juce::String value;
+        };
+
+        struct DiagnosticSection
+        {
+            juce::String title;
+            std::vector<DiagnosticEntry> entries;
+        };
+
+        static bool isSectionTitle(const juce::String& line)
+        {
+            return line == utf8Text("本地实例") || line == utf8Text("共享实例");
+        }
+
+        static std::pair<juce::String, juce::String> splitKeyValue(const juce::String& line)
+        {
+            auto colonIndex = line.indexOfChar(juce_wchar(0xff1a));
+            int separatorLength = 1;
+
+            if (colonIndex < 0)
+                colonIndex = line.indexOfChar(juce_wchar(':'));
+
+            if (colonIndex < 0)
+                return { {}, line };
+
+            return {
+                line.substring(0, colonIndex + separatorLength),
+                line.substring(colonIndex + separatorLength).trimStart()
+            };
+        }
+
+        void parseDiagnosticText()
+        {
+            sections_.clear();
+            DiagnosticSection* currentSection = nullptr;
+            const auto lines = juce::StringArray::fromLines(text_);
+
+            for (const auto& rawLine : lines)
+            {
+                const auto line = rawLine.trim();
+
+                if (line.isEmpty())
+                    continue;
+
+                if (isSectionTitle(line))
+                {
+                    sections_.push_back({ line, {} });
+                    currentSection = &sections_.back();
+                    continue;
+                }
+
+                if (currentSection == nullptr)
+                    continue;
+
+                const auto [key, value] = splitKeyValue(line);
+                currentSection->entries.push_back({ key, value });
+            }
+        }
+
+        static void paintSectionCard(juce::Graphics& graphics, juce::Rectangle<int> area, const DiagnosticSection& section)
+        {
+            const auto cardBounds = area.toFloat();
+            graphics.setColour(panelInner.withAlpha(0.92f));
+            graphics.fillRoundedRectangle(cardBounds, 20.0f);
+            graphics.setColour(panelOutline.withAlpha(0.95f));
+            graphics.drawRoundedRectangle(cardBounds, 20.0f, 1.0f);
+
+            auto content = area.reduced(14, 12);
+
+            graphics.setColour(accentBright);
+            graphics.setFont(juce::FontOptions("Microsoft YaHei", 19.0f, juce::Font::bold));
+            graphics.drawText(section.title, content.removeFromTop(28), juce::Justification::centredLeft, false);
+
+            content.removeFromTop(6);
+
+            const auto labelFont = juce::Font(juce::FontOptions("Microsoft YaHei", 16.0f, juce::Font::bold));
+            const auto valueFont = juce::Font(juce::FontOptions("Microsoft YaHei", 16.0f, juce::Font::plain));
+            const int keyWidth = juce::jlimit(118, content.getWidth() / 2, 190);
+
+            for (const auto& entry : section.entries)
+            {
+                auto row = content.removeFromTop(30);
+                auto keyArea = row.removeFromLeft(keyWidth);
+
+                graphics.setColour(textMuted);
+                graphics.setFont(labelFont);
+                graphics.drawFittedText(entry.key, keyArea, juce::Justification::centredLeft, 1, 0.92f);
+
+                graphics.setColour(textStrong);
+                graphics.setFont(valueFont);
+                graphics.drawFittedText(entry.value, row, juce::Justification::centredLeft, 1, 0.92f);
+            }
+        }
+
+        static int getSectionCardHeight(const DiagnosticSection& section)
+        {
+            constexpr int topPadding = 12;
+            constexpr int titleHeight = 28;
+            constexpr int titleGap = 6;
+            constexpr int rowHeight = 30;
+            constexpr int bottomPadding = 12;
+
+            return topPadding + titleHeight + titleGap + static_cast<int>(section.entries.size()) * rowHeight + bottomPadding;
+        }
+
+        juce::String text_;
+        std::vector<DiagnosticSection> sections_;
+    };
+
+    void timerCallback() override
+    {
+        refresh();
+    }
+
+    void refresh()
+    {
+        const auto text = processor_.getDiagnosticText();
+        if (text != lastText_)
+        {
+            lastText_ = text;
+            display_.setDiagnosticText(lastText_);
+            updatePreferredSize();
+        }
+    }
+
+    void updateDisplayLayout()
+    {
+        const auto width = viewport_.getWidth() > 0 ? viewport_.getWidth() : preferredWidth - 28;
+        const auto height = display_.getPreferredHeight(width);
+        display_.setBounds(0, 0, width, height);
+    }
+
+    int getContentHeightForWidth(int width) const
+    {
+        const auto viewportWidth = juce::jmax(200, width - 28);
+        return display_.getPreferredHeight(viewportWidth) + 28;
+    }
+
+    void updatePreferredSize()
+    {
+        const auto newWidth = preferredWidth;
+        const auto newHeight = getContentHeightForWidth(newWidth);
+
+        if (getWidth() != newWidth || getHeight() != newHeight)
+            setSize(newWidth, newHeight);
+        else
+            updateDisplayLayout();
+    }
+
+    DeepFilterNetVstAudioProcessor& processor_;
+    juce::Viewport viewport_;
+    DiagnosticDisplay display_;
+    juce::String lastText_;
+};
 }
 
 DeepFilterNetVstAudioProcessorEditor::AccentLookAndFeel::AccentLookAndFeel()
@@ -258,6 +512,81 @@ juce::Font DeepFilterNetVstAudioProcessorEditor::AccentLookAndFeel::getPopupMenu
     return juce::FontOptions(14.0f, juce::Font::bold);
 }
 
+void DeepFilterNetVstAudioProcessorEditor::AccentLookAndFeel::drawButtonBackground(juce::Graphics& graphics,
+                                                                                    juce::Button& button,
+                                                                                    const juce::Colour&,
+                                                                                    bool isMouseOverButton,
+                                                                                    bool isButtonDown)
+{
+    auto bounds = button.getLocalBounds().toFloat().reduced(0.5f);
+    auto background = panelInner;
+    auto outline = panelOutlineStrong;
+
+    if (!button.isEnabled())
+    {
+        background = background.withAlpha(0.6f);
+        outline = outline.withAlpha(0.45f);
+    }
+    else if (isButtonDown)
+    {
+        background = accentSoft.withAlpha(0.9f);
+        outline = accent;
+    }
+    else if (isMouseOverButton)
+    {
+        background = background.interpolatedWith(panelOutlineStrong, 0.15f);
+        outline = outline.interpolatedWith(accent, 0.35f);
+    }
+
+    juce::ColourGradient gradient(background.brighter(0.08f), bounds.getX(), bounds.getY(),
+                                  background.darker(0.14f), bounds.getRight(), bounds.getBottom(), false);
+    graphics.setGradientFill(gradient);
+    graphics.fillRoundedRectangle(bounds, 12.0f);
+    graphics.setColour(outline);
+    graphics.drawRoundedRectangle(bounds, 12.0f, 1.2f);
+}
+
+juce::Font DeepFilterNetVstAudioProcessorEditor::AccentLookAndFeel::getTextButtonFont(juce::TextButton&, int buttonHeight)
+{
+    return juce::FontOptions(static_cast<float>(juce::jmax(13, buttonHeight / 2)), juce::Font::bold);
+}
+
+class DeepFilterNetVstAudioProcessorEditor::DiagnosticWindow final : public juce::DocumentWindow
+{
+public:
+    DiagnosticWindow(DeepFilterNetVstAudioProcessorEditor& owner, DeepFilterNetVstAudioProcessor& processor)
+        : juce::DocumentWindow(utf8Text("运行信息"),
+                               panelColour,
+                               juce::DocumentWindow::closeButton,
+                               true),
+          owner_(owner)
+    {
+        setUsingNativeTitleBar(false);
+        setTitleBarHeight(34);
+        setResizable(false, false);
+        setContentOwned(new DiagnosticContent(processor), true);
+        centreAroundComponent(&owner, getWidth(), getHeight());
+    }
+
+    float getDesktopScaleFactor() const override
+    {
+        return juce::Component::getApproximateScaleFactorForComponent(&owner_);
+    }
+
+    void closeButtonPressed() override
+    {
+        setVisible(false);
+        juce::MessageManager::callAsync([safeOwner = juce::Component::SafePointer<DeepFilterNetVstAudioProcessorEditor>(&owner_)]
+        {
+            if (safeOwner != nullptr)
+                safeOwner->closeDiagnosticWindow();
+        });
+    }
+
+private:
+    DeepFilterNetVstAudioProcessorEditor& owner_;
+};
+
 DeepFilterNetVstAudioProcessorEditor::DeepFilterNetVstAudioProcessorEditor(DeepFilterNetVstAudioProcessor& processor)
     : AudioProcessorEditor(&processor),
       processor_(processor),
@@ -292,22 +621,18 @@ DeepFilterNetVstAudioProcessorEditor::DeepFilterNetVstAudioProcessorEditor(DeepF
         valueLabel->setColour(juce::Label::textColourId, accent);
         addAndMakeVisible(*valueLabel);
     }
-
-    statusLabel_.setJustificationType(juce::Justification::topLeft);
-    statusLabel_.setFont(juce::FontOptions(13.5f, juce::Font::plain));
-    statusLabel_.setColour(juce::Label::textColourId, textMuted);
-    addAndMakeVisible(statusLabel_);
+    configureButton(diagnosticButton_, utf8Text("运行信息"));
+    diagnosticButton_.onClick = [this] { showDiagnosticWindow(); };
 
     denoiseSlider_.onValueChange = [this] { updateValueLabels(); };
     postSlider_.onValueChange = [this] { updateValueLabels(); };
 
     updateValueLabels();
-    updateStatusLabel();
-    startTimerHz(6);
 }
 
 DeepFilterNetVstAudioProcessorEditor::~DeepFilterNetVstAudioProcessorEditor()
 {
+    closeDiagnosticWindow();
     setLookAndFeel(nullptr);
 }
 
@@ -351,7 +676,7 @@ void DeepFilterNetVstAudioProcessorEditor::paint(juce::Graphics& graphics)
     graphics.setColour(accent.withAlpha(0.9f));
     graphics.fillRoundedRectangle(24.0f, 22.0f, 86.0f, 6.0f, 3.0f);
 
-    const auto badgeBounds = juce::Rectangle<int>(getWidth() - 118, 28, 88, 24);
+    const auto badgeBounds = juce::Rectangle<int>(getWidth() - 222, 28, 72, 24);
     graphics.setColour(accentSoft.withAlpha(0.7f));
     graphics.fillRoundedRectangle(badgeBounds.toFloat(), 12.0f);
     graphics.setColour(accentBright);
@@ -361,8 +686,8 @@ void DeepFilterNetVstAudioProcessorEditor::paint(juce::Graphics& graphics)
 
 void DeepFilterNetVstAudioProcessorEditor::resized()
 {
-    titleLabel_.setBounds(28, 18, getWidth() - 56, 34);
-    subtitleLabel_.setBounds(30, 50, getWidth() - 120, 20);
+    titleLabel_.setBounds(28, 18, getWidth() - 180, 34);
+    subtitleLabel_.setBounds(30, 50, getWidth() - 184, 20);
 
     const auto content = getLocalBounds().reduced(28, 86);
     const int cardWidth = content.getWidth();
@@ -378,40 +703,13 @@ void DeepFilterNetVstAudioProcessorEditor::resized()
 
     reduceMaskLabel_.setBounds(40, 290, 180, 22);
     reduceMaskComboBox_.setBounds(36, 320, cardWidth - 12, 36);
-
-    statusLabel_.setBounds(30, 376, getWidth() - 60, 28);
-}
-
-void DeepFilterNetVstAudioProcessorEditor::timerCallback()
-{
-    updateStatusLabel();
+    diagnosticButton_.setBounds(getWidth() - 144, 24, 108, 32);
 }
 
 void DeepFilterNetVstAudioProcessorEditor::updateValueLabels()
 {
     denoiseValueLabel_.setText(juce::String(denoiseSlider_.getValue(), 0) + " dB", juce::dontSendNotification);
     postValueLabel_.setText(juce::String(postSlider_.getValue(), 3), juce::dontSendNotification);
-}
-
-void DeepFilterNetVstAudioProcessorEditor::updateStatusLabel()
-{
-    if (processor_.getCurrentSampleRateHz() <= 0.0)
-    {
-        statusLabel_.setText(utf8Text("等待宿主播放配置。"), juce::dontSendNotification);
-        return;
-    }
-
-    if (processor_.isSampleRateCompatible())
-    {
-        const auto suffix = processor_.isDenoiserReady() ? utf8Text("运行时已加载") : utf8Text("正在初始化运行时");
-        statusLabel_.setText(utf8Text("宿主采样率为 48 kHz，") + suffix + utf8Text("。"), juce::dontSendNotification);
-        return;
-    }
-
-    const auto suffix = processor_.isDenoiserReady() ? utf8Text("运行时已加载") : utf8Text("正在初始化运行时");
-    statusLabel_.setText(utf8Text("当前宿主采样率为 ") + juce::String(processor_.getCurrentSampleRateHz(), 1)
-                             + utf8Text(" Hz，插件会在内部重采样到 48 kHz，") + suffix + utf8Text("。"),
-                         juce::dontSendNotification);
 }
 
 void DeepFilterNetVstAudioProcessorEditor::configureSlider(juce::Slider& slider, juce::Label& label, const juce::String& title)
@@ -426,6 +724,14 @@ void DeepFilterNetVstAudioProcessorEditor::configureSlider(juce::Slider& slider,
     label.setFont(juce::FontOptions(15.0f, juce::Font::bold));
     label.setColour(juce::Label::textColourId, textStrong);
     addAndMakeVisible(label);
+}
+
+void DeepFilterNetVstAudioProcessorEditor::configureButton(juce::TextButton& button, const juce::String& text)
+{
+    button.setButtonText(text);
+    button.setColour(juce::TextButton::textColourOffId, textStrong);
+    button.setColour(juce::TextButton::textColourOnId, textStrong);
+    addAndMakeVisible(button);
 }
 
 void DeepFilterNetVstAudioProcessorEditor::configureComboBox(juce::ComboBox& comboBox,
@@ -447,5 +753,23 @@ void DeepFilterNetVstAudioProcessorEditor::configureComboBox(juce::ComboBox& com
     label.setFont(juce::FontOptions(15.0f, juce::Font::bold));
     label.setColour(juce::Label::textColourId, textStrong);
     addAndMakeVisible(label);
+}
+
+void DeepFilterNetVstAudioProcessorEditor::showDiagnosticWindow()
+{
+    if (diagnosticWindow_ == nullptr)
+        diagnosticWindow_ = std::make_unique<DiagnosticWindow>(*this, processor_);
+
+    diagnosticWindow_->setVisible(true);
+    diagnosticWindow_->toFront(true);
+}
+
+void DeepFilterNetVstAudioProcessorEditor::closeDiagnosticWindow()
+{
+    if (diagnosticWindow_ == nullptr)
+        return;
+
+    diagnosticWindow_->setVisible(false);
+    diagnosticWindow_.reset();
 }
 
