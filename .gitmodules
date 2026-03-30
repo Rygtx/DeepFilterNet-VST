@@ -4,3 +4,9 @@
 [submodule "extern/JUCE"]
 	path = extern/JUCE
 	url = https://github.com/juce-framework/JUCE.git
+[submodule "extern/DeepFilterNet"]
+	path = extern/DeepFilterNet
+	url = https://github.com/Rikorose/DeepFilterNet.git
+[submodule "extern/Corrosion"]
+	path = extern/Corrosion
+	url = https://github.com/corrosion-rs/corrosion.git

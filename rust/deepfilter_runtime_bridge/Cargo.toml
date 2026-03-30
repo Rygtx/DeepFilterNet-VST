@@ -1,0 +1,16 @@
+[package]
+name = "deepfilter_runtime_bridge"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "deepfilter_runtime_bridge"
+crate-type = ["staticlib"]
+
+[dependencies]
+deep_filter = { path = "../../extern/DeepFilterNet/libDF", package = "deep_filter", default-features = false, features = ["tract", "default-model"] }
+ndarray = "=0.15.6"
+tract-core = "=0.21.4"
+tract-hir = "=0.21.4"
+tract-onnx = "=0.21.4"
+tract-pulse = "=0.21.4"

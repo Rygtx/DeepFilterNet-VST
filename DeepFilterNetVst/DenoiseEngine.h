@@ -1,9 +1,8 @@
 #pragma once
 
-#include "RuntimeAssets.h"
+#include "DeepFilterRuntimeBridge.h"
 
 #include <JuceHeader.h>
-#include <optional>
 #include <vector>
 
 namespace dfvst
@@ -66,40 +65,34 @@ private:
         double sourcePosition_ = 0.0;
     };
 
-    struct DfApi
+    struct ChannelState
     {
-        using create_t = void* (__cdecl*)(const char* path, float attenLimDb, void* logLevel);
-        using get_frame_length_t = size_t(__cdecl*)(void* state);
-        using set_atten_lim_t = void(__cdecl*)(void* state, float limDb);
-        using set_post_filter_beta_t = void(__cdecl*)(void* state, float beta);
-        using process_frame_t = float(__cdecl*)(void* state, const float* input, float* output);
-        using free_t = void(__cdecl*)(void* state);
-
-        bool load(const juce::File& libraryFile);
-        void unload();
-
-        juce::DynamicLibrary library;
-        create_t create = nullptr;
-        get_frame_length_t getFrameLength = nullptr;
-        set_atten_lim_t setAttenLim = nullptr;
-        set_post_filter_beta_t setPostFilterBeta = nullptr;
-        process_frame_t processFrame = nullptr;
-        free_t freeState = nullptr;
+        StreamingLinearResampler inputResampler;
+        StreamingLinearResampler outputResampler;
+        FloatQueue inputQueue;
+        FloatQueue outputQueue;
+        std::vector<float> scratchInput;
+        std::vector<float> scratchOutput;
+        std::vector<float> resampledInput;
+        std::vector<float> resampledOutput;
     };
 
-    bool ensureInitialized();
+    bool ensureInitialized(int channelCount);
     void shutdown();
     void applyParameters(bool force);
+    void ensureChannelStates(int channelCount);
+    void resizeChannelBuffers(ChannelState& channelState);
 
-    static constexpr double targetSampleRate = 48000.0;
+    static constexpr double fallbackTargetSampleRate = 48000.0;
     static constexpr size_t queueReserveMultiplier = 8;
+    static constexpr int runtimeReduceMask = 2; // ReduceMask::MEAN, matching upstream default_with_ch()
 
-    DfApi api_;
-    void* state_ = nullptr;
-    std::optional<RuntimeAssetPaths> runtimeAssets_;
+    DfVstBridgeState* state_ = nullptr;
     double sampleRate_ = 0.0;
+    double runtimeSampleRate_ = fallbackTargetSampleRate;
     int maximumBlockSize_ = 0;
     int frameSize_ = 0;
+    int channelCount_ = 0;
     bool ready_ = false;
     bool initAttempted_ = false;
     bool primed_ = false;
@@ -107,14 +100,7 @@ private:
     float postFilterBeta_ = 0.0f;
     float attenLimApplied_ = 100.0f;
     float postFilterApplied_ = 0.0f;
-    StreamingLinearResampler inputResampler_;
-    StreamingLinearResampler outputResampler_;
-    FloatQueue inputQueue_;
-    FloatQueue outputQueue_;
-    std::vector<float> scratchInput_;
-    std::vector<float> scratchOutput_;
-    std::vector<float> resampledInput_;
-    std::vector<float> resampledOutput_;
+    std::vector<ChannelState> channelStates_;
     std::vector<float> frameInput_;
     std::vector<float> frameOutput_;
 };

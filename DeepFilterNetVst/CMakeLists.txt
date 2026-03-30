@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 # 插件版本固定由源码文件维护；如需升级版本，请直接修改这里。
-set(DEEPFILTERNET_PLUGIN_VERSION "2026.3.29.1")
+set(DEEPFILTERNET_PLUGIN_VERSION "2026.3.29.2")
 
 if(NOT DEEPFILTERNET_PLUGIN_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$")
   message(FATAL_ERROR "DEEPFILTERNET_PLUGIN_VERSION must use the numeric format YYYY.M.D.N, e.g. 2026.3.29.1")
@@ -11,6 +11,8 @@ project(DeepFilterNetVst VERSION ${DEEPFILTERNET_PLUGIN_VERSION} LANGUAGES C CXX
 
 set(JUCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../extern/JUCE" CACHE PATH "Path to the JUCE repository")
 set(FST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../extern/FST" CACHE PATH "Path to the FST repository")
+set(DEEPFILTERNET_UPSTREAM_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../extern/DeepFilterNet" CACHE PATH "Path to the DeepFilterNet upstream repository")
+set(CORROSION_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../extern/Corrosion" CACHE PATH "Path to the Corrosion repository")
 
 if(NOT EXISTS "${JUCE_DIR}/CMakeLists.txt")
   message(FATAL_ERROR "JUCE not found at ${JUCE_DIR}. Run 'git submodule update --init --recursive' first.")
@@ -20,16 +22,12 @@ if(NOT EXISTS "${FST_DIR}/fst/aeffectx.h")
   message(FATAL_ERROR "FST headers not found at ${FST_DIR}. Run 'git submodule update --init --recursive' first.")
 endif()
 
-set(EMBEDDED_ASSETS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/EmbeddedAssets")
-set(DF_DLL "${EMBEDDED_ASSETS_DIR}/df.dll")
-set(MODEL_FILE "${EMBEDDED_ASSETS_DIR}/DeepFilterNet3_onnx.tar.gz")
-
-if(NOT EXISTS "${DF_DLL}")
-  message(FATAL_ERROR "df.dll not found at ${DF_DLL}")
+if(NOT EXISTS "${DEEPFILTERNET_UPSTREAM_DIR}/libDF/Cargo.toml")
+  message(FATAL_ERROR "DeepFilterNet upstream not found at ${DEEPFILTERNET_UPSTREAM_DIR}. Run 'git submodule update --init --recursive' first.")
 endif()
 
-if(NOT EXISTS "${MODEL_FILE}")
-  message(FATAL_ERROR "Model file not found at ${MODEL_FILE}")
+if(NOT EXISTS "${CORROSION_DIR}/CMakeLists.txt")
+  message(FATAL_ERROR "Corrosion not found at ${CORROSION_DIR}. Run 'git submodule update --init --recursive' first.")
 endif()
 
 set(VST2_SDK_COMPAT_DIR "${CMAKE_CURRENT_BINARY_DIR}/juce_vst2_sdk")
@@ -39,13 +37,20 @@ configure_file("${FST_DIR}/fst/aeffect.h" "${VST2_SDK_COMPAT_HEADERS}/aeffect.h"
 configure_file("${FST_DIR}/fst/aeffectx.h" "${VST2_SDK_COMPAT_HEADERS}/aeffectx.h" COPYONLY)
 configure_file("${FST_DIR}/fst/fst.h" "${VST2_SDK_COMPAT_HEADERS}/fst.h" COPYONLY)
 
-file(TO_CMAKE_PATH "${DF_DLL}" DF_DLL_RC)
-file(TO_CMAKE_PATH "${MODEL_FILE}" MODEL_FILE_RC)
-configure_file(
-  "${CMAKE_CURRENT_SOURCE_DIR}/EmbeddedResources.rc.in"
-  "${CMAKE_CURRENT_BINARY_DIR}/EmbeddedResources.rc"
-  @ONLY
+set(DEEPFILTER_RUNTIME_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/../rust/deepfilter_runtime_bridge/Cargo.toml")
+
+set(CORROSION_BUILD_TESTS OFF CACHE BOOL "Disable Corrosion self tests" FORCE)
+add_subdirectory("${CORROSION_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/Corrosion")
+corrosion_import_crate(
+  MANIFEST_PATH "${DEEPFILTER_RUNTIME_MANIFEST}"
+  LOCKED
 )
+
+if(WIN32)
+  # Corrosion 0.6.1 在当前依赖链上未把 bcrypt 传播到最终链接步骤，
+  # 会导致 getrandom 依赖的 BCryptGenRandom 在插件链接阶段缺符号。
+  target_link_libraries(deepfilter_runtime_bridge INTERFACE advapi32 bcrypt)
+endif()
 
 add_subdirectory("${JUCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/JUCE")
 
@@ -75,43 +80,17 @@ target_sources(DeepFilterNetVst
   PRIVATE
     DenoiseEngine.cpp
     DenoiseEngine.h
+    DeepFilterRuntimeBridge.h
     PluginEditor.cpp
     PluginEditor.h
     PluginProcessor.cpp
     PluginProcessor.h
-    ResourceIds.h
-    RuntimeAssets.cpp
-    RuntimeAssets.h
 )
 
 target_include_directories(DeepFilterNetVst
   PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
 )
-
-if(TARGET DeepFilterNetVst_VST)
-  target_sources(DeepFilterNetVst_VST
-    PRIVATE
-      "${CMAKE_CURRENT_BINARY_DIR}/EmbeddedResources.rc"
-  )
-
-  target_include_directories(DeepFilterNetVst_VST
-    PRIVATE
-      "${CMAKE_CURRENT_SOURCE_DIR}"
-  )
-endif()
-
-if(TARGET DeepFilterNetVst_VST3)
-  target_sources(DeepFilterNetVst_VST3
-    PRIVATE
-      "${CMAKE_CURRENT_BINARY_DIR}/EmbeddedResources.rc"
-  )
-
-  target_include_directories(DeepFilterNetVst_VST3
-    PRIVATE
-      "${CMAKE_CURRENT_SOURCE_DIR}"
-  )
-endif()
 
 target_compile_definitions(DeepFilterNetVst
   PUBLIC
@@ -121,9 +100,15 @@ target_compile_definitions(DeepFilterNetVst
     JUCE_REPORT_APP_USAGE=0
 )
 
+target_compile_options(DeepFilterNetVst
+  PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+)
+
 target_link_libraries(DeepFilterNetVst
   PRIVATE
     juce::juce_audio_utils
+    deepfilter_runtime_bridge
   PUBLIC
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags

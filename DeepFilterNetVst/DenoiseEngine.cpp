@@ -8,12 +8,6 @@ namespace dfvst
 {
 namespace
 {
-template <typename T>
-T getFunction(juce::DynamicLibrary& library, const char* name)
-{
-    return reinterpret_cast<T>(library.getFunction(name));
-}
-
 size_t estimateResampledCount(size_t inputCount, double inputRate, double outputRate)
 {
     if (inputCount == 0 || inputRate <= 0.0 || outputRate <= 0.0)
@@ -36,33 +30,27 @@ void DenoiseEngine::setSampleRate(double sampleRate)
 void DenoiseEngine::setMaximumBlockSize(int maximumBlockSize)
 {
     maximumBlockSize_ = std::max(maximumBlockSize, 0);
-    scratchInput_.resize(static_cast<size_t>(maximumBlockSize_));
-    scratchOutput_.resize(static_cast<size_t>(maximumBlockSize_));
 
-    const auto blockSize = static_cast<size_t>(maximumBlockSize_);
-    if (blockSize == 0 || sampleRate_ <= 0.0)
-        return;
-
-    inputResampler_.reserve(blockSize + 8);
-    outputResampler_.reserve(estimateResampledCount(blockSize, sampleRate_, targetSampleRate) + 8);
-    resampledInput_.reserve(estimateResampledCount(blockSize, sampleRate_, targetSampleRate));
-    resampledOutput_.reserve(estimateResampledCount(blockSize, targetSampleRate, sampleRate_));
+    for (auto& channelState : channelStates_)
+        resizeChannelBuffers(channelState);
 }
 
 void DenoiseEngine::prepare()
 {
     shutdown();
-    ensureInitialized();
 }
 
 void DenoiseEngine::reset()
 {
-    inputResampler_.clear();
-    outputResampler_.clear();
-    inputQueue_.clear();
-    outputQueue_.clear();
-    primed_ = false;
+    for (auto& channelState : channelStates_)
+    {
+        channelState.inputResampler.clear();
+        channelState.outputResampler.clear();
+        channelState.inputQueue.clear();
+        channelState.outputQueue.clear();
+    }
 
+    primed_ = false;
     std::fill(frameInput_.begin(), frameInput_.end(), 0.0f);
     std::fill(frameOutput_.begin(), frameOutput_.end(), 0.0f);
 }
@@ -89,49 +77,79 @@ void DenoiseEngine::process(juce::AudioBuffer<float>& buffer)
     if (sampleRate_ <= 0.0)
         return;
 
-    if (!ready_ && !ensureInitialized())
+    if (channelCount_ != numChannels)
+    {
+        shutdown();
+        channelCount_ = 0;
+    }
+
+    if (!ready_ && !ensureInitialized(numChannels))
         return;
 
-    if (scratchInput_.size() < static_cast<size_t>(numSamples))
-        scratchInput_.resize(static_cast<size_t>(numSamples));
-    if (scratchOutput_.size() < static_cast<size_t>(numSamples))
-        scratchOutput_.resize(static_cast<size_t>(numSamples));
+    if (static_cast<int>(channelStates_.size()) != numChannels)
+        return;
 
-    const auto* left = buffer.getReadPointer(0);
-    const auto* right = numChannels > 1 ? buffer.getReadPointer(1) : nullptr;
-
-    if (right != nullptr)
+    for (int channel = 0; channel < numChannels; ++channel)
     {
-        for (int i = 0; i < numSamples; ++i)
-            scratchInput_[static_cast<size_t>(i)] = 0.5f * (left[i] + right[i]);
-    }
-    else
-    {
-        std::memcpy(scratchInput_.data(), left, static_cast<size_t>(numSamples) * sizeof(float));
-    }
+        auto& channelState = channelStates_[static_cast<size_t>(channel)];
+        if (channelState.scratchInput.size() < static_cast<size_t>(numSamples))
+            channelState.scratchInput.resize(static_cast<size_t>(numSamples));
 
-    inputResampler_.push(scratchInput_.data(), static_cast<size_t>(numSamples));
-    inputResampler_.drainAvailable(resampledInput_);
-    if (!resampledInput_.empty())
-        inputQueue_.push(resampledInput_.data(), resampledInput_.size());
+        std::memcpy(channelState.scratchInput.data(),
+                    buffer.getReadPointer(channel),
+                    static_cast<size_t>(numSamples) * sizeof(float));
 
-    while (inputQueue_.size() >= static_cast<size_t>(frameSize_))
-    {
-        inputQueue_.pop(frameInput_.data(), static_cast<size_t>(frameSize_));
-        api_.processFrame(state_, frameInput_.data(), frameOutput_.data());
-        outputQueue_.push(frameOutput_.data(), static_cast<size_t>(frameSize_));
+        channelState.inputResampler.push(channelState.scratchInput.data(), static_cast<size_t>(numSamples));
+        channelState.inputResampler.drainAvailable(channelState.resampledInput);
+
+        if (!channelState.resampledInput.empty())
+            channelState.inputQueue.push(channelState.resampledInput.data(), channelState.resampledInput.size());
     }
 
-    const auto processedSamplesAvailable = outputQueue_.size();
-    if (processedSamplesAvailable > 0)
+    while (std::all_of(channelStates_.begin(),
+                       channelStates_.end(),
+                       [this](const ChannelState& channelState)
+                       {
+                           return channelState.inputQueue.size() >= static_cast<size_t>(frameSize_);
+                       }))
     {
-        resampledOutput_.resize(processedSamplesAvailable);
-        const auto popped = outputQueue_.pop(resampledOutput_.data(), processedSamplesAvailable);
-        outputResampler_.push(resampledOutput_.data(), popped);
+        for (int channel = 0; channel < numChannels; ++channel)
+        {
+            auto& channelState = channelStates_[static_cast<size_t>(channel)];
+            auto* frameInput = frameInput_.data() + static_cast<size_t>(channel) * static_cast<size_t>(frameSize_);
+            channelState.inputQueue.pop(frameInput, static_cast<size_t>(frameSize_));
+        }
+
+        dfvst_process_frame(state_, frameInput_.data(), frameOutput_.data());
+
+        for (int channel = 0; channel < numChannels; ++channel)
+        {
+            auto& channelState = channelStates_[static_cast<size_t>(channel)];
+            const auto* frameOutput = frameOutput_.data() + static_cast<size_t>(channel) * static_cast<size_t>(frameSize_);
+            channelState.outputQueue.push(frameOutput, static_cast<size_t>(frameSize_));
+        }
     }
 
-    if (!primed_ && outputResampler_.hasBufferedInput())
-        primed_ = true;
+    for (auto& channelState : channelStates_)
+    {
+        const auto processedSamplesAvailable = channelState.outputQueue.size();
+        if (processedSamplesAvailable == 0)
+            continue;
+
+        channelState.resampledOutput.resize(processedSamplesAvailable);
+        const auto popped = channelState.outputQueue.pop(channelState.resampledOutput.data(), processedSamplesAvailable);
+        channelState.outputResampler.push(channelState.resampledOutput.data(), popped);
+    }
+
+    if (!primed_)
+    {
+        primed_ = std::all_of(channelStates_.begin(),
+                              channelStates_.end(),
+                              [](const ChannelState& channelState)
+                              {
+                                  return channelState.outputResampler.hasBufferedInput();
+                              });
+    }
 
     if (!primed_)
     {
@@ -139,16 +157,23 @@ void DenoiseEngine::process(juce::AudioBuffer<float>& buffer)
         return;
     }
 
-    const auto written = outputResampler_.produce(scratchOutput_.data(), static_cast<size_t>(numSamples));
-    if (written < static_cast<size_t>(numSamples))
-    {
-        std::fill(scratchOutput_.begin() + static_cast<std::ptrdiff_t>(written),
-                  scratchOutput_.begin() + numSamples,
-                  0.0f);
-    }
-
     for (int channel = 0; channel < numChannels; ++channel)
-        buffer.copyFrom(channel, 0, scratchOutput_.data(), numSamples);
+    {
+        auto& channelState = channelStates_[static_cast<size_t>(channel)];
+        if (channelState.scratchOutput.size() < static_cast<size_t>(numSamples))
+            channelState.scratchOutput.resize(static_cast<size_t>(numSamples));
+
+        const auto written = channelState.outputResampler.produce(channelState.scratchOutput.data(),
+                                                                  static_cast<size_t>(numSamples));
+        if (written < static_cast<size_t>(numSamples))
+        {
+            std::fill(channelState.scratchOutput.begin() + static_cast<std::ptrdiff_t>(written),
+                      channelState.scratchOutput.begin() + numSamples,
+                      0.0f);
+        }
+
+        buffer.copyFrom(channel, 0, channelState.scratchOutput.data(), numSamples);
+    }
 }
 
 bool DenoiseEngine::isSampleRateSupported() const
@@ -163,89 +188,51 @@ bool DenoiseEngine::isReady() const
 
 int DenoiseEngine::getLatencySamples() const
 {
-    if (!ready_ || sampleRate_ <= 0.0)
+    if (!ready_ || sampleRate_ <= 0.0 || runtimeSampleRate_ <= 0.0)
         return 0;
 
-    const auto hostSamples = (static_cast<double>(frameSize_) * sampleRate_) / targetSampleRate;
+    const auto hostSamples = (static_cast<double>(frameSize_) * sampleRate_) / runtimeSampleRate_;
     return juce::jmax(0, juce::roundToInt(std::ceil(hostSamples)) + 1);
 }
 
-bool DenoiseEngine::DfApi::load(const juce::File& libraryFile)
-{
-    if (!libraryFile.existsAsFile())
-        return false;
-
-    if (!library.open(libraryFile.getFullPathName()))
-        return false;
-
-    create = getFunction<create_t>(library, "df_create");
-    getFrameLength = getFunction<get_frame_length_t>(library, "df_get_frame_length");
-    setAttenLim = getFunction<set_atten_lim_t>(library, "df_set_atten_lim");
-    setPostFilterBeta = getFunction<set_post_filter_beta_t>(library, "df_set_post_filter_beta");
-    processFrame = getFunction<process_frame_t>(library, "df_process_frame");
-    freeState = getFunction<free_t>(library, "df_free");
-
-    if (!create || !getFrameLength || !setAttenLim || !setPostFilterBeta || !processFrame || !freeState)
-    {
-        unload();
-        return false;
-    }
-
-    return true;
-}
-
-void DenoiseEngine::DfApi::unload()
-{
-    library.close();
-    create = nullptr;
-    getFrameLength = nullptr;
-    setAttenLim = nullptr;
-    setPostFilterBeta = nullptr;
-    processFrame = nullptr;
-    freeState = nullptr;
-}
-
-bool DenoiseEngine::ensureInitialized()
+bool DenoiseEngine::ensureInitialized(int channelCount)
 {
     if (ready_)
         return true;
 
-    if (initAttempted_ || !isSampleRateSupported())
+    if (initAttempted_ || !isSampleRateSupported() || channelCount <= 0)
         return false;
 
     initAttempted_ = true;
-    runtimeAssets_ = EmbeddedRuntimeAssets::ensureExtracted();
-    if (!runtimeAssets_.has_value())
-        return false;
-
-    if (!api_.load(runtimeAssets_->dfDll))
-        return false;
-
-    const auto modelPath = runtimeAssets_->modelArchive.getFullPathName();
-    state_ = api_.create(modelPath.toRawUTF8(), attenLimDb_, nullptr);
+    ensureChannelStates(channelCount);
+    state_ = dfvst_create(static_cast<size_t>(channelCount_), attenLimDb_, postFilterBeta_, runtimeReduceMask);
     if (state_ == nullptr)
-    {
-        api_.unload();
         return false;
-    }
 
-    frameSize_ = static_cast<int>(api_.getFrameLength(state_));
-    if (frameSize_ <= 0)
+    frameSize_ = static_cast<int>(dfvst_get_frame_length(state_));
+    runtimeSampleRate_ = static_cast<double>(dfvst_get_sample_rate(state_));
+
+    if (frameSize_ <= 0 || runtimeSampleRate_ <= 0.0
+        || static_cast<int>(dfvst_get_channel_count(state_)) != channelCount_)
     {
         shutdown();
         return false;
     }
 
-    frameInput_.assign(static_cast<size_t>(frameSize_), 0.0f);
-    frameOutput_.assign(static_cast<size_t>(frameSize_), 0.0f);
-    inputResampler_.reset(sampleRate_, targetSampleRate);
-    outputResampler_.reset(targetSampleRate, sampleRate_);
-    inputQueue_.clear();
-    outputQueue_.clear();
-    inputQueue_.reserve(static_cast<size_t>(frameSize_) * queueReserveMultiplier);
-    outputQueue_.reserve(static_cast<size_t>(frameSize_) * queueReserveMultiplier);
-    if (maximumBlockSize_ > 0)
-        setMaximumBlockSize(maximumBlockSize_);
+    frameInput_.assign(static_cast<size_t>(frameSize_) * static_cast<size_t>(channelCount_), 0.0f);
+    frameOutput_.assign(static_cast<size_t>(frameSize_) * static_cast<size_t>(channelCount_), 0.0f);
+
+    for (auto& channelState : channelStates_)
+    {
+        channelState.inputResampler.reset(sampleRate_, runtimeSampleRate_);
+        channelState.outputResampler.reset(runtimeSampleRate_, sampleRate_);
+        channelState.inputQueue.clear();
+        channelState.outputQueue.clear();
+        channelState.inputQueue.reserve(static_cast<size_t>(frameSize_) * queueReserveMultiplier);
+        channelState.outputQueue.reserve(static_cast<size_t>(frameSize_) * queueReserveMultiplier);
+        resizeChannelBuffers(channelState);
+    }
+
     applyParameters(true);
     primed_ = false;
     ready_ = true;
@@ -256,23 +243,27 @@ void DenoiseEngine::shutdown()
 {
     if (state_ != nullptr)
     {
-        api_.freeState(state_);
+        dfvst_free(state_);
         state_ = nullptr;
     }
 
-    api_.unload();
     ready_ = false;
     initAttempted_ = false;
     primed_ = false;
     frameSize_ = 0;
-    inputResampler_.clear();
-    outputResampler_.clear();
-    inputQueue_.clear();
-    outputQueue_.clear();
-    resampledInput_.clear();
-    resampledOutput_.clear();
+    runtimeSampleRate_ = fallbackTargetSampleRate;
     frameInput_.clear();
     frameOutput_.clear();
+
+    for (auto& channelState : channelStates_)
+    {
+        channelState.inputResampler.clear();
+        channelState.outputResampler.clear();
+        channelState.inputQueue.clear();
+        channelState.outputQueue.clear();
+        channelState.resampledInput.clear();
+        channelState.resampledOutput.clear();
+    }
 }
 
 void DenoiseEngine::applyParameters(bool force)
@@ -282,15 +273,40 @@ void DenoiseEngine::applyParameters(bool force)
 
     if (force || std::abs(attenLimDb_ - attenLimApplied_) > 1.0e-3f)
     {
-        api_.setAttenLim(state_, attenLimDb_);
+        dfvst_set_atten_lim(state_, attenLimDb_);
         attenLimApplied_ = attenLimDb_;
     }
 
     if (force || std::abs(postFilterBeta_ - postFilterApplied_) > 1.0e-6f)
     {
-        api_.setPostFilterBeta(state_, postFilterBeta_);
+        dfvst_set_post_filter_beta(state_, postFilterBeta_);
         postFilterApplied_ = postFilterBeta_;
     }
+}
+
+void DenoiseEngine::ensureChannelStates(int channelCount)
+{
+    channelCount_ = std::max(channelCount, 0);
+    channelStates_.resize(static_cast<size_t>(channelCount_));
+
+    for (auto& channelState : channelStates_)
+        resizeChannelBuffers(channelState);
+}
+
+void DenoiseEngine::resizeChannelBuffers(ChannelState& channelState)
+{
+    channelState.scratchInput.resize(static_cast<size_t>(maximumBlockSize_));
+    channelState.scratchOutput.resize(static_cast<size_t>(maximumBlockSize_));
+
+    const auto blockSize = static_cast<size_t>(maximumBlockSize_);
+    const auto runtimeRate = runtimeSampleRate_ > 0.0 ? runtimeSampleRate_ : fallbackTargetSampleRate;
+    if (blockSize == 0 || sampleRate_ <= 0.0)
+        return;
+
+    channelState.inputResampler.reserve(blockSize + 8);
+    channelState.outputResampler.reserve(estimateResampledCount(blockSize, sampleRate_, runtimeRate) + 8);
+    channelState.resampledInput.reserve(estimateResampledCount(blockSize, sampleRate_, runtimeRate));
+    channelState.resampledOutput.reserve(estimateResampledCount(blockSize, runtimeRate, sampleRate_));
 }
 
 void DenoiseEngine::FloatQueue::clear()

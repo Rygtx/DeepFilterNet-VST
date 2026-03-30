@@ -1,4 +1,0 @@
-#include "ResourceIds.h"
-
-IDR_DF_DLL RCDATA "@DF_DLL_RC@"
-IDR_MODEL_FILE RCDATA "@MODEL_FILE_RC@"
