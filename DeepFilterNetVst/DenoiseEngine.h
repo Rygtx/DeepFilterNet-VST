@@ -45,36 +45,33 @@ private:
         size_t readPosition_ = 0;
     };
 
-    class StreamingLinearResampler
+    class SharedLinearResampler
     {
     public:
-        void reset(double inputSampleRate, double outputSampleRate);
+        void reset(double inputSampleRate, double outputSampleRate, size_t channelCount);
         void clear();
         void reserve(size_t count);
-        void push(const float* data, size_t count);
-        void drainAvailable(std::vector<float>& destination);
-        size_t produce(float* destination, size_t maxOutputSamples);
+        void push(const std::vector<const float*>& channelData, size_t count);
+        void drainAvailable(std::vector<std::vector<float>>& destination);
+        size_t produce(const std::vector<float*>& destination, size_t maxOutputSamples);
         bool hasBufferedInput() const;
 
     private:
         bool canProduce() const;
-        float produceOne();
+        void ensureChannelCount(size_t channelCount);
+        void discardConsumedInput();
 
-        FloatQueue inputQueue_;
+        std::vector<FloatQueue> inputQueues_;
         double inputSamplesPerOutputSample_ = 1.0;
         double sourcePosition_ = 0.0;
     };
 
     struct ChannelState
     {
-        StreamingLinearResampler inputResampler;
-        StreamingLinearResampler outputResampler;
         FloatQueue inputQueue;
         FloatQueue outputQueue;
         std::vector<float> scratchInput;
         std::vector<float> scratchOutput;
-        std::vector<float> resampledInput;
-        std::vector<float> resampledOutput;
     };
 
     bool ensureInitialized(int channelCount);
@@ -102,7 +99,13 @@ private:
     float postFilterApplied_ = 0.0f;
     int reduceMask_ = defaultReduceMask;
     int reduceMaskApplied_ = -1;
+    SharedLinearResampler inputResampler_;
+    SharedLinearResampler outputResampler_;
     std::vector<ChannelState> channelStates_;
+    std::vector<std::vector<float>> resampledInput_;
+    std::vector<std::vector<float>> resampledOutput_;
+    std::vector<const float*> channelReadPointers_;
+    std::vector<float*> channelWritePointers_;
     std::vector<float> frameInput_;
     std::vector<float> frameOutput_;
 };
