@@ -77,7 +77,7 @@ bool DeepFilterNetVstAudioProcessor::hasEditor() const
 
 const juce::String DeepFilterNetVstAudioProcessor::getName() const
 {
-    return JucePlugin_Name;
+    return pluginDisplayName;
 }
 
 bool DeepFilterNetVstAudioProcessor::acceptsMidi() const

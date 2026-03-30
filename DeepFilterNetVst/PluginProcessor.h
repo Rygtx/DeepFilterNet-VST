@@ -38,6 +38,7 @@ public:
     bool isSampleRateCompatible() const;
     bool isDenoiserReady() const;
 
+    static constexpr const char* pluginDisplayName = "DeepFilterNet";
     static constexpr auto attenParamId = "attenLimDb";
     static constexpr auto postParamId = "postFilterBeta";
 

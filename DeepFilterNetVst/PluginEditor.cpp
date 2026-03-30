@@ -65,7 +65,7 @@ DeepFilterNetVstAudioProcessorEditor::DeepFilterNetVstAudioProcessorEditor(DeepF
     setLookAndFeel(&lookAndFeel_);
     setSize(460, 320);
 
-    titleLabel_.setText("DeepFilterNet", juce::dontSendNotification);
+    titleLabel_.setText(DeepFilterNetVstAudioProcessor::pluginDisplayName, juce::dontSendNotification);
     titleLabel_.setFont(juce::FontOptions(31.0f, juce::Font::bold));
     titleLabel_.setColour(juce::Label::textColourId, textStrong);
     addAndMakeVisible(titleLabel_);
