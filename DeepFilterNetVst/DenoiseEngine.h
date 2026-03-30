@@ -15,7 +15,7 @@ public:
 
     void setSampleRate(double sampleRate);
     void setMaximumBlockSize(int maximumBlockSize);
-    void prepare();
+    void prepare(int channelCount);
     void reset();
     void release();
 

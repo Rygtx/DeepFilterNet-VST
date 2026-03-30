@@ -48,9 +48,12 @@ void DenoiseEngine::setMaximumBlockSize(int maximumBlockSize)
     outputResampler_.reserve(estimateResampledCount(blockSize, runtimeRate, sampleRate_) + 8);
 }
 
-void DenoiseEngine::prepare()
+void DenoiseEngine::prepare(int channelCount)
 {
     shutdown();
+
+    if (channelCount > 0)
+        (void) ensureInitialized(channelCount);
 }
 
 void DenoiseEngine::reset()

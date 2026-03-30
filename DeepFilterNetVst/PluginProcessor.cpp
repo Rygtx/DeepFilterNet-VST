@@ -221,7 +221,14 @@ void DeepFilterNetVstAudioProcessor::prepareToPlay(double sampleRate, int sample
 
     engine_.setSampleRate(sampleRate);
     engine_.setMaximumBlockSize(samplesPerBlock);
-    engine_.prepare();
+
+    if (attenLimDbParam_ != nullptr && postFilterBetaParam_ != nullptr && reduceMaskParam_ != nullptr)
+        engine_.updateParameters(attenLimDbParam_->load(),
+                                 postFilterBetaParam_->load(),
+                                 juce::roundToInt(reduceMaskParam_->load()));
+
+    const auto channelCount = juce::jmax(getTotalNumInputChannels(), getTotalNumOutputChannels());
+    engine_.prepare(channelCount);
     setLatencySamples(engine_.getLatencySamples());
     publishSharedDiagnostics();
 }
