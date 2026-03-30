@@ -15,6 +15,11 @@ size_t estimateResampledCount(size_t inputCount, double inputRate, double output
 
     return static_cast<size_t>(std::ceil((static_cast<double>(inputCount) * outputRate) / inputRate)) + 8;
 }
+
+int clampReduceMask(int reduceMask)
+{
+    return juce::jlimit(0, 2, reduceMask);
+}
 }
 
 DenoiseEngine::~DenoiseEngine()
@@ -60,10 +65,18 @@ void DenoiseEngine::release()
     shutdown();
 }
 
-void DenoiseEngine::updateParameters(float attenLimDb, float postFilterBeta)
+void DenoiseEngine::updateParameters(float attenLimDb, float postFilterBeta, int reduceMask)
 {
     attenLimDb_ = juce::jlimit(0.0f, 100.0f, attenLimDb);
     postFilterBeta_ = juce::jlimit(0.0f, 0.05f, postFilterBeta);
+    reduceMask_ = clampReduceMask(reduceMask);
+
+    if (state_ != nullptr && reduceMask_ != reduceMaskApplied_)
+    {
+        shutdown();
+        return;
+    }
+
     applyParameters(false);
 }
 
@@ -205,7 +218,7 @@ bool DenoiseEngine::ensureInitialized(int channelCount)
 
     initAttempted_ = true;
     ensureChannelStates(channelCount);
-    state_ = dfvst_create(static_cast<size_t>(channelCount_), attenLimDb_, postFilterBeta_, runtimeReduceMask);
+    state_ = dfvst_create(static_cast<size_t>(channelCount_), attenLimDb_, postFilterBeta_, reduceMask_);
     if (state_ == nullptr)
         return false;
 
@@ -219,6 +232,7 @@ bool DenoiseEngine::ensureInitialized(int channelCount)
         return false;
     }
 
+    reduceMaskApplied_ = reduceMask_;
     frameInput_.assign(static_cast<size_t>(frameSize_) * static_cast<size_t>(channelCount_), 0.0f);
     frameOutput_.assign(static_cast<size_t>(frameSize_) * static_cast<size_t>(channelCount_), 0.0f);
 
@@ -252,6 +266,7 @@ void DenoiseEngine::shutdown()
     primed_ = false;
     frameSize_ = 0;
     runtimeSampleRate_ = fallbackTargetSampleRate;
+    reduceMaskApplied_ = -1;
     frameInput_.clear();
     frameOutput_.clear();
 

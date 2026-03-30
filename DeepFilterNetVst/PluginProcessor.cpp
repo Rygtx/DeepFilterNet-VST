@@ -21,6 +21,7 @@ DeepFilterNetVstAudioProcessor::DeepFilterNetVstAudioProcessor()
 {
     attenLimDbParam_ = parameters_.getRawParameterValue(attenParamId);
     postFilterBetaParam_ = parameters_.getRawParameterValue(postParamId);
+    reduceMaskParam_ = parameters_.getRawParameterValue(reduceMaskParamId);
 }
 
 DeepFilterNetVstAudioProcessor::~DeepFilterNetVstAudioProcessor() = default;
@@ -58,8 +59,10 @@ void DeepFilterNetVstAudioProcessor::processBlock(juce::AudioBuffer<float>& buff
     for (auto channel = getTotalNumInputChannels(); channel < getTotalNumOutputChannels(); ++channel)
         buffer.clear(channel, 0, buffer.getNumSamples());
 
-    if (attenLimDbParam_ != nullptr && postFilterBetaParam_ != nullptr)
-        engine_.updateParameters(attenLimDbParam_->load(), postFilterBetaParam_->load());
+    if (attenLimDbParam_ != nullptr && postFilterBetaParam_ != nullptr && reduceMaskParam_ != nullptr)
+        engine_.updateParameters(attenLimDbParam_->load(),
+                                 postFilterBetaParam_->load(),
+                                 juce::roundToInt(reduceMaskParam_->load()));
 
     engine_.process(buffer);
     setLatencySamples(engine_.getLatencySamples());
@@ -164,6 +167,15 @@ bool DeepFilterNetVstAudioProcessor::isDenoiserReady() const
     return engine_.isReady();
 }
 
+juce::StringArray DeepFilterNetVstAudioProcessor::getReduceMaskChoices()
+{
+    return {
+        utf8Text("独立（NONE）"),
+        utf8Text("最大值（MAX）"),
+        utf8Text("平均值（MEAN）")
+    };
+}
+
 juce::AudioProcessorValueTreeState::ParameterLayout DeepFilterNetVstAudioProcessor::createParameterLayout()
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> parameters;
@@ -189,6 +201,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout DeepFilterNetVstAudioProcess
             {
                 return juce::String(value, 3);
             })));
+
+    parameters.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID(reduceMaskParamId, 1),
+        utf8Text("声道掩码合并"),
+        getReduceMaskChoices(),
+        0));
 
     return { parameters.begin(), parameters.end() };
 }

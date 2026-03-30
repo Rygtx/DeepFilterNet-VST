@@ -19,7 +19,7 @@ public:
     void reset();
     void release();
 
-    void updateParameters(float attenLimDb, float postFilterBeta);
+    void updateParameters(float attenLimDb, float postFilterBeta, int reduceMask);
     void process(juce::AudioBuffer<float>& buffer);
 
     bool isSampleRateSupported() const;
@@ -85,7 +85,7 @@ private:
 
     static constexpr double fallbackTargetSampleRate = 48000.0;
     static constexpr size_t queueReserveMultiplier = 8;
-    static constexpr int runtimeReduceMask = 2; // ReduceMask::MEAN, matching upstream default_with_ch()
+    static constexpr int defaultReduceMask = 0; // ReduceMask::NONE
 
     DfVstBridgeState* state_ = nullptr;
     double sampleRate_ = 0.0;
@@ -100,6 +100,8 @@ private:
     float postFilterBeta_ = 0.0f;
     float attenLimApplied_ = 100.0f;
     float postFilterApplied_ = 0.0f;
+    int reduceMask_ = defaultReduceMask;
+    int reduceMaskApplied_ = -1;
     std::vector<ChannelState> channelStates_;
     std::vector<float> frameInput_;
     std::vector<float> frameOutput_;

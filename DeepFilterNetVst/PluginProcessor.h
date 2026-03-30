@@ -37,10 +37,12 @@ public:
     double getCurrentSampleRateHz() const;
     bool isSampleRateCompatible() const;
     bool isDenoiserReady() const;
+    static juce::StringArray getReduceMaskChoices();
 
     static constexpr const char* pluginDisplayName = "DeepFilterNet";
     static constexpr auto attenParamId = "attenLimDb";
     static constexpr auto postParamId = "postFilterBeta";
+    static constexpr auto reduceMaskParamId = "reduceMask";
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
@@ -49,6 +51,7 @@ private:
     juce::AudioProcessorValueTreeState parameters_;
     std::atomic<float>* attenLimDbParam_ = nullptr;
     std::atomic<float>* postFilterBetaParam_ = nullptr;
+    std::atomic<float>* reduceMaskParam_ = nullptr;
 };
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter();
