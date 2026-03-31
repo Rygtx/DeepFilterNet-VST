@@ -10,6 +10,7 @@
 namespace
 {
 constexpr double targetSampleRate = 48000.0;
+constexpr float inputActivityThreshold = 1.0e-6f;
 
 juce::String utf8Text(const char* text)
 {
@@ -36,6 +37,27 @@ juce::String getHostText(const juce::PluginHostType& hostType)
 {
     const juce::String description(hostType.getHostDescription());
     return description.equalsIgnoreCase("Unknown") ? utf8Text("未知") : description;
+}
+
+bool hasRealInputSignal(const juce::AudioBuffer<float>& buffer, int inputChannelCount)
+{
+    const auto channelsToCheck = juce::jmin(inputChannelCount, buffer.getNumChannels());
+    for (int channel = 0; channel < channelsToCheck; ++channel)
+    {
+        const auto* input = buffer.getReadPointer(channel);
+        for (int sampleIndex = 0; sampleIndex < buffer.getNumSamples(); ++sampleIndex)
+        {
+            if (std::abs(input[sampleIndex]) > inputActivityThreshold)
+                return true;
+        }
+    }
+
+    return false;
+}
+
+bool shouldDelayRuntimeInitialization(juce::AudioProcessor::WrapperType wrapperType)
+{
+    return wrapperType == juce::AudioProcessor::wrapperType_VST;
 }
 
 struct SharedDiagnosticSnapshot
@@ -227,9 +249,18 @@ void DeepFilterNetVstAudioProcessor::prepareToPlay(double sampleRate, int sample
                                  postFilterBetaParam_->load(),
                                  juce::roundToInt(reduceMaskParam_->load()));
 
-    const auto channelCount = juce::jmax(getTotalNumInputChannels(), getTotalNumOutputChannels());
-    engine_.prepare(channelCount);
-    setLatencySamples(engine_.getLatencySamples());
+    if (shouldDelayRuntimeInitialization(wrapperType))
+    {
+        engine_.release();
+        setLatencySamples(0);
+    }
+    else
+    {
+        const auto channelCount = juce::jmax(getTotalNumInputChannels(), getTotalNumOutputChannels());
+        engine_.prepare(channelCount);
+        setLatencySamples(engine_.getLatencySamples());
+    }
+
     publishSharedDiagnostics();
 }
 
@@ -269,6 +300,14 @@ void DeepFilterNetVstAudioProcessor::processBlock(juce::AudioBuffer<float>& buff
         engine_.updateParameters(attenLimDbParam_->load(),
                                  postFilterBetaParam_->load(),
                                  juce::roundToInt(reduceMaskParam_->load()));
+
+    if (shouldDelayRuntimeInitialization(wrapperType)
+        && !hasRealInputSignal(buffer, getTotalNumInputChannels()))
+    {
+        setLatencySamples(engine_.getLatencySamples());
+        publishSharedDiagnostics();
+        return;
+    }
 
     engine_.process(buffer);
     setLatencySamples(engine_.getLatencySamples());
