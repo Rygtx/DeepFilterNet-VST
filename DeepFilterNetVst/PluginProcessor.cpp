@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 #if JUCE_WINDOWS
@@ -16,6 +17,7 @@ namespace
 {
 constexpr double targetSampleRate = 48000.0;
 constexpr float inputActivityThreshold = 1.0e-6f;
+constexpr double silentResetThresholdSeconds = 0.5;
 constexpr int maxSharedDiagnosticInstances = 32;
 constexpr int64_t sharedDiagnosticMaxIdleMs = 10 * 60 * 1000;
 
@@ -65,6 +67,14 @@ bool hasRealInputSignal(const juce::AudioBuffer<float>& buffer, int inputChannel
 bool shouldDelayRuntimeInitialization(juce::AudioProcessor::WrapperType wrapperType)
 {
     return wrapperType == juce::AudioProcessor::wrapperType_VST;
+}
+
+int64_t getSilentResetThresholdSamples(double sampleRate)
+{
+    if (sampleRate <= 0.0)
+        return (std::numeric_limits<int64_t>::max)();
+
+    return static_cast<int64_t>(std::ceil(sampleRate * silentResetThresholdSeconds));
 }
 
 uint32_t allocateInstanceSerial()
@@ -424,6 +434,8 @@ void DeepFilterNetVstAudioProcessor::prepareToPlay(double sampleRate, int sample
     prepareToPlayCount_.fetch_add(1);
     lastPreparedSampleRateHz_.store(sampleRate);
     lastPreparedBlockSizeSamples_.store(samplesPerBlock);
+    consecutiveSilentInputSamples_ = 0;
+    engineResetForCurrentSilence_ = false;
 
     engine_.setSampleRate(sampleRate);
     engine_.setMaximumBlockSize(samplesPerBlock);
@@ -451,6 +463,8 @@ void DeepFilterNetVstAudioProcessor::prepareToPlay(double sampleRate, int sample
 void DeepFilterNetVstAudioProcessor::releaseResources()
 {
     releaseResourcesCount_.fetch_add(1);
+    consecutiveSilentInputSamples_ = 0;
+    engineResetForCurrentSilence_ = false;
     engine_.release();
     setLatencySamples(0);
     publishSharedDiagnostics();
@@ -485,12 +499,40 @@ void DeepFilterNetVstAudioProcessor::processBlock(juce::AudioBuffer<float>& buff
                                  postFilterBetaParam_->load(),
                                  juce::roundToInt(reduceMaskParam_->load()));
 
-    if (shouldDelayRuntimeInitialization(wrapperType)
-        && !hasRealInputSignal(buffer, getTotalNumInputChannels()))
+    const auto hasRealInput = hasRealInputSignal(buffer, getTotalNumInputChannels());
+
+    if (shouldDelayRuntimeInitialization(wrapperType) && !hasRealInput)
     {
-        setLatencySamples(engine_.getLatencySamples());
-        publishSharedDiagnostics();
-        return;
+        if (!engine_.isReady())
+        {
+            setLatencySamples(engine_.getLatencySamples());
+            publishSharedDiagnostics();
+            return;
+        }
+
+        consecutiveSilentInputSamples_ = juce::jmin((std::numeric_limits<int64_t>::max)() - static_cast<int64_t>(numSamples),
+                                                    consecutiveSilentInputSamples_)
+                                         + static_cast<int64_t>(numSamples);
+
+        if (!engineResetForCurrentSilence_
+            && consecutiveSilentInputSamples_ >= getSilentResetThresholdSamples(getSampleRate()))
+        {
+            engine_.reset();
+            engineResetForCurrentSilence_ = true;
+        }
+
+        if (engineResetForCurrentSilence_)
+        {
+            buffer.clear();
+            setLatencySamples(engine_.getLatencySamples());
+            publishSharedDiagnostics();
+            return;
+        }
+    }
+    else
+    {
+        consecutiveSilentInputSamples_ = 0;
+        engineResetForCurrentSilence_ = false;
     }
 
     engine_.process(buffer);
