@@ -3,6 +3,7 @@
 #include "DeepFilterRuntimeBridge.h"
 
 #include <JuceHeader.h>
+#include <cstddef>
 #include <vector>
 
 namespace dfvst
@@ -45,25 +46,47 @@ private:
         size_t readPosition_ = 0;
     };
 
-    class SharedLinearResampler
+    class SharedRubatoResampler
     {
     public:
-        void reset(double inputSampleRate, double outputSampleRate, size_t channelCount);
+        enum class Mode
+        {
+            fixedIn,
+            fixedOut,
+        };
+
+        ~SharedRubatoResampler();
+
+        bool reset(Mode mode, double inputSampleRate, double outputSampleRate, size_t chunkSize, size_t channelCount);
         void clear();
+        void release();
         void reserve(size_t count);
         void push(const std::vector<const float*>& channelData, size_t count);
         void drainAvailable(std::vector<std::vector<float>>& destination);
         size_t produce(const std::vector<float*>& destination, size_t maxOutputSamples);
-        bool hasBufferedInput() const;
+        bool hasBufferedInput();
+        size_t getOutputDelay() const;
 
     private:
-        bool canProduce() const;
+        void destroyState();
         void ensureChannelCount(size_t channelCount);
-        void discardConsumedInput();
+        void refreshFrameCounts();
+        void processAvailableInput();
+        size_t getAvailableOutputSamples() const;
+        bool canProcessInput() const;
 
+        DfVstResamplerState* state_ = nullptr;
+        Mode mode_ = Mode::fixedIn;
+        size_t channelCount_ = 0;
+        bool passthrough_ = false;
+        size_t inputFramesMax_ = 0;
+        size_t inputFramesNext_ = 0;
+        size_t outputFramesMax_ = 0;
+        size_t outputDelay_ = 0;
         std::vector<FloatQueue> inputQueues_;
-        double inputSamplesPerOutputSample_ = 1.0;
-        double sourcePosition_ = 0.0;
+        std::vector<FloatQueue> outputQueues_;
+        std::vector<float> processInput_;
+        std::vector<float> processOutput_;
     };
 
     struct ChannelState
@@ -99,8 +122,8 @@ private:
     float postFilterApplied_ = 0.0f;
     int reduceMask_ = defaultReduceMask;
     int reduceMaskApplied_ = -1;
-    SharedLinearResampler inputResampler_;
-    SharedLinearResampler outputResampler_;
+    SharedRubatoResampler inputResampler_;
+    SharedRubatoResampler outputResampler_;
     std::vector<ChannelState> channelStates_;
     std::vector<std::vector<float>> resampledInput_;
     std::vector<std::vector<float>> resampledOutput_;

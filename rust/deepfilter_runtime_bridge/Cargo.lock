@@ -203,6 +203,7 @@ version = "0.1.0"
 dependencies = [
  "deep_filter",
  "ndarray",
+ "rubato",
  "tract-core",
  "tract-hir",
  "tract-onnx",

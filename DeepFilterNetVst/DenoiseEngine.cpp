@@ -234,8 +234,16 @@ int DenoiseEngine::getLatencySamples() const
     if (!ready_ || sampleRate_ <= 0.0 || runtimeSampleRate_ <= 0.0)
         return 0;
 
-    const auto hostSamples = (static_cast<double>(frameSize_) * sampleRate_) / runtimeSampleRate_;
-    return juce::jmax(0, juce::roundToInt(std::ceil(hostSamples)) + 1);
+    const auto modelLatencyHostSamples = (static_cast<double>(frameSize_) * sampleRate_) / runtimeSampleRate_;
+    const auto inputResamplerDelayHostSamples =
+        (static_cast<double>(inputResampler_.getOutputDelay()) * sampleRate_) / runtimeSampleRate_;
+    const auto outputResamplerDelayHostSamples = static_cast<double>(outputResampler_.getOutputDelay());
+
+    return juce::jmax(0,
+                      juce::roundToInt(std::ceil(modelLatencyHostSamples
+                                                 + inputResamplerDelayHostSamples
+                                                 + outputResamplerDelayHostSamples))
+                          + 1);
 }
 
 bool DenoiseEngine::ensureInitialized(int channelCount)
@@ -265,8 +273,20 @@ bool DenoiseEngine::ensureInitialized(int channelCount)
     reduceMaskApplied_ = reduceMask_;
     frameInput_.assign(static_cast<size_t>(frameSize_) * static_cast<size_t>(channelCount_), 0.0f);
     frameOutput_.assign(static_cast<size_t>(frameSize_) * static_cast<size_t>(channelCount_), 0.0f);
-    inputResampler_.reset(sampleRate_, runtimeSampleRate_, static_cast<size_t>(channelCount_));
-    outputResampler_.reset(runtimeSampleRate_, sampleRate_, static_cast<size_t>(channelCount_));
+    if (!inputResampler_.reset(SharedRubatoResampler::Mode::fixedOut,
+                               sampleRate_,
+                               runtimeSampleRate_,
+                               static_cast<size_t>(frameSize_),
+                               static_cast<size_t>(channelCount_))
+        || !outputResampler_.reset(SharedRubatoResampler::Mode::fixedIn,
+                                   runtimeSampleRate_,
+                                   sampleRate_,
+                                   static_cast<size_t>(frameSize_),
+                                   static_cast<size_t>(channelCount_)))
+    {
+        shutdown();
+        return false;
+    }
 
     for (auto& channelState : channelStates_)
     {
@@ -299,8 +319,8 @@ void DenoiseEngine::shutdown()
     reduceMaskApplied_ = -1;
     frameInput_.clear();
     frameOutput_.clear();
-    inputResampler_.clear();
-    outputResampler_.clear();
+    inputResampler_.release();
+    outputResampler_.release();
 
     for (auto& channelState : channelStates_)
     {
@@ -416,141 +436,268 @@ void DenoiseEngine::FloatQueue::compact()
     }
 }
 
-void DenoiseEngine::SharedLinearResampler::reset(double inputSampleRate, double outputSampleRate, size_t channelCount)
+DenoiseEngine::SharedRubatoResampler::~SharedRubatoResampler()
 {
-    inputSamplesPerOutputSample_ = 1.0;
-
-    if (inputSampleRate > 0.0 && outputSampleRate > 0.0)
-        inputSamplesPerOutputSample_ = inputSampleRate / outputSampleRate;
-
-    ensureChannelCount(channelCount);
-    clear();
+    destroyState();
 }
 
-void DenoiseEngine::SharedLinearResampler::clear()
+bool DenoiseEngine::SharedRubatoResampler::reset(Mode mode,
+                                                 double inputSampleRate,
+                                                 double outputSampleRate,
+                                                 size_t chunkSize,
+                                                 size_t channelCount)
+{
+    release();
+    ensureChannelCount(channelCount);
+
+    mode_ = mode;
+    channelCount_ = channelCount;
+
+    if (channelCount_ == 0 || chunkSize == 0 || inputSampleRate <= 0.0 || outputSampleRate <= 0.0)
+        return false;
+
+    passthrough_ = std::abs(inputSampleRate - outputSampleRate) <= 1.0e-6;
+    if (passthrough_)
+    {
+        inputFramesMax_ = chunkSize;
+        inputFramesNext_ = chunkSize;
+        outputFramesMax_ = chunkSize;
+        outputDelay_ = 0;
+        processInput_.assign(channelCount_ * inputFramesMax_, 0.0f);
+        processOutput_.assign(channelCount_ * outputFramesMax_, 0.0f);
+        clear();
+        return true;
+    }
+
+    const auto inputRate = static_cast<size_t>(juce::roundToInt(inputSampleRate));
+    const auto outputRate = static_cast<size_t>(juce::roundToInt(outputSampleRate));
+
+    if (mode_ == Mode::fixedIn)
+    {
+        state_ = dfvst_resampler_create_fixed_in(inputRate, outputRate, chunkSize, 1, channelCount_);
+    }
+    else
+    {
+        state_ = dfvst_resampler_create_fixed_out(inputRate, outputRate, chunkSize, 1, channelCount_);
+    }
+
+    if (state_ == nullptr)
+    {
+        release();
+        return false;
+    }
+
+    refreshFrameCounts();
+    processInput_.assign(channelCount_ * inputFramesMax_, 0.0f);
+    processOutput_.assign(channelCount_ * outputFramesMax_, 0.0f);
+    clear();
+    return true;
+}
+
+void DenoiseEngine::SharedRubatoResampler::clear()
 {
     for (auto& inputQueue : inputQueues_)
         inputQueue.clear();
 
-    sourcePosition_ = 0.0;
+    for (auto& outputQueue : outputQueues_)
+        outputQueue.clear();
+
+    if (state_ != nullptr)
+    {
+        dfvst_resampler_reset(state_);
+        refreshFrameCounts();
+    }
 }
 
-void DenoiseEngine::SharedLinearResampler::reserve(size_t count)
+void DenoiseEngine::SharedRubatoResampler::release()
+{
+    destroyState();
+
+    for (auto& inputQueue : inputQueues_)
+        inputQueue.clear();
+
+    for (auto& outputQueue : outputQueues_)
+        outputQueue.clear();
+
+    inputQueues_.clear();
+    outputQueues_.clear();
+    processInput_.clear();
+    processOutput_.clear();
+    channelCount_ = 0;
+    passthrough_ = false;
+    inputFramesMax_ = 0;
+    inputFramesNext_ = 0;
+    outputFramesMax_ = 0;
+    outputDelay_ = 0;
+}
+
+void DenoiseEngine::SharedRubatoResampler::reserve(size_t count)
 {
     for (auto& inputQueue : inputQueues_)
         inputQueue.reserve(count);
+
+    for (auto& outputQueue : outputQueues_)
+        outputQueue.reserve(count);
 }
 
-void DenoiseEngine::SharedLinearResampler::push(const std::vector<const float*>& channelData, size_t count)
+void DenoiseEngine::SharedRubatoResampler::push(const std::vector<const float*>& channelData, size_t count)
 {
-    jassert(channelData.size() == inputQueues_.size());
+    jassert(channelData.size() == channelCount_);
 
-    if (channelData.size() != inputQueues_.size())
+    if (channelData.size() != channelCount_ || count == 0)
         return;
 
-    for (size_t channel = 0; channel < inputQueues_.size(); ++channel)
+    if (passthrough_)
+    {
+        for (size_t channel = 0; channel < channelCount_; ++channel)
+            outputQueues_[channel].push(channelData[channel], count);
+
+        return;
+    }
+
+    for (size_t channel = 0; channel < channelCount_; ++channel)
         inputQueues_[channel].push(channelData[channel], count);
+
+    processAvailableInput();
 }
 
-void DenoiseEngine::SharedLinearResampler::drainAvailable(std::vector<std::vector<float>>& destination)
+void DenoiseEngine::SharedRubatoResampler::drainAvailable(std::vector<std::vector<float>>& destination)
 {
-    destination.resize(inputQueues_.size());
+    destination.resize(channelCount_);
     for (auto& channelDestination : destination)
         channelDestination.clear();
 
-    if (inputQueues_.empty())
+    processAvailableInput();
+
+    const auto available = getAvailableOutputSamples();
+    if (available == 0)
         return;
 
-    const auto availableInput = inputQueues_.front().size();
-    const auto estimatedCount = inputSamplesPerOutputSample_ > 0.0
-        ? static_cast<size_t>(std::ceil((static_cast<double>(availableInput) + 1.0) / inputSamplesPerOutputSample_))
-        : 0;
-
-    for (auto& channelDestination : destination)
+    for (size_t channel = 0; channel < channelCount_; ++channel)
     {
-        if (channelDestination.capacity() < estimatedCount)
-            channelDestination.reserve(estimatedCount);
-    }
-
-    while (canProduce())
-    {
-        const auto baseIndex = static_cast<size_t>(sourcePosition_);
-        const auto fraction = static_cast<float>(sourcePosition_ - static_cast<double>(baseIndex));
-
-        for (size_t channel = 0; channel < inputQueues_.size(); ++channel)
-        {
-            const auto first = inputQueues_[channel].get(baseIndex);
-            const auto second = inputQueues_[channel].get(baseIndex + 1);
-            destination[channel].push_back(first + fraction * (second - first));
-        }
-
-        sourcePosition_ += inputSamplesPerOutputSample_;
-        discardConsumedInput();
+        destination[channel].resize(available);
+        const auto popped = outputQueues_[channel].pop(destination[channel].data(), available);
+        juce::ignoreUnused(popped);
+        jassert(popped == available);
     }
 }
 
-size_t DenoiseEngine::SharedLinearResampler::produce(const std::vector<float*>& destination, size_t maxOutputSamples)
+size_t DenoiseEngine::SharedRubatoResampler::produce(const std::vector<float*>& destination, size_t maxOutputSamples)
 {
-    if (destination.size() != inputQueues_.size() || maxOutputSamples == 0)
+    if (destination.size() != channelCount_ || maxOutputSamples == 0)
         return 0;
 
-    size_t produced = 0;
+    processAvailableInput();
 
-    while (produced < maxOutputSamples && canProduce())
+    const auto available = std::min(maxOutputSamples, getAvailableOutputSamples());
+    if (available == 0)
+        return 0;
+
+    for (size_t channel = 0; channel < channelCount_; ++channel)
     {
-        const auto baseIndex = static_cast<size_t>(sourcePosition_);
-        const auto fraction = static_cast<float>(sourcePosition_ - static_cast<double>(baseIndex));
-
-        for (size_t channel = 0; channel < inputQueues_.size(); ++channel)
-        {
-            const auto first = inputQueues_[channel].get(baseIndex);
-            const auto second = inputQueues_[channel].get(baseIndex + 1);
-            destination[channel][produced] = first + fraction * (second - first);
-        }
-
-        ++produced;
-        sourcePosition_ += inputSamplesPerOutputSample_;
-        discardConsumedInput();
+        const auto popped = outputQueues_[channel].pop(destination[channel], available);
+        juce::ignoreUnused(popped);
+        jassert(popped == available);
     }
 
-    return produced;
+    return available;
 }
 
-bool DenoiseEngine::SharedLinearResampler::hasBufferedInput() const
+bool DenoiseEngine::SharedRubatoResampler::hasBufferedInput()
 {
-    return canProduce();
+    processAvailableInput();
+    return getAvailableOutputSamples() > 0;
 }
 
-bool DenoiseEngine::SharedLinearResampler::canProduce() const
+size_t DenoiseEngine::SharedRubatoResampler::getOutputDelay() const
 {
-    if (inputQueues_.empty())
+    return outputDelay_;
+}
+
+void DenoiseEngine::SharedRubatoResampler::destroyState()
+{
+    if (state_ != nullptr)
+    {
+        dfvst_resampler_free(state_);
+        state_ = nullptr;
+    }
+}
+
+void DenoiseEngine::SharedRubatoResampler::ensureChannelCount(size_t channelCount)
+{
+    inputQueues_.resize(channelCount);
+    outputQueues_.resize(channelCount);
+}
+
+void DenoiseEngine::SharedRubatoResampler::refreshFrameCounts()
+{
+    if (state_ == nullptr)
+        return;
+
+    inputFramesMax_ = dfvst_resampler_get_input_frames_max(state_);
+    inputFramesNext_ = dfvst_resampler_get_input_frames_next(state_);
+    outputFramesMax_ = dfvst_resampler_get_output_frames_max(state_);
+    outputDelay_ = dfvst_resampler_get_output_delay(state_);
+}
+
+void DenoiseEngine::SharedRubatoResampler::processAvailableInput()
+{
+    if (passthrough_ || state_ == nullptr)
+        return;
+
+    while (canProcessInput())
+    {
+        processInput_.resize(channelCount_ * inputFramesNext_);
+        processOutput_.resize(channelCount_ * outputFramesMax_);
+
+        for (size_t channel = 0; channel < channelCount_; ++channel)
+        {
+            auto* channelInput = processInput_.data() + channel * inputFramesNext_;
+            const auto popped = inputQueues_[channel].pop(channelInput, inputFramesNext_);
+            juce::ignoreUnused(popped);
+            jassert(popped == inputFramesNext_);
+        }
+
+        const auto produced = dfvst_resampler_process(state_,
+                                                      processInput_.data(),
+                                                      inputFramesNext_,
+                                                      processOutput_.data(),
+                                                      outputFramesMax_);
+        jassert(produced > 0);
+        if (produced == 0)
+            break;
+
+        for (size_t channel = 0; channel < channelCount_; ++channel)
+        {
+            const auto* channelOutput = processOutput_.data() + channel * outputFramesMax_;
+            outputQueues_[channel].push(channelOutput, produced);
+        }
+
+        refreshFrameCounts();
+    }
+}
+
+size_t DenoiseEngine::SharedRubatoResampler::getAvailableOutputSamples() const
+{
+    if (outputQueues_.empty())
+        return 0;
+
+    auto available = outputQueues_.front().size();
+    for (const auto& outputQueue : outputQueues_)
+        available = std::min(available, outputQueue.size());
+
+    return available;
+}
+
+bool DenoiseEngine::SharedRubatoResampler::canProcessInput() const
+{
+    if (state_ == nullptr || inputQueues_.empty() || inputFramesNext_ == 0 || outputFramesMax_ == 0)
         return false;
 
     auto available = inputQueues_.front().size();
     for (const auto& inputQueue : inputQueues_)
         available = std::min(available, inputQueue.size());
 
-    if (available < 2)
-        return false;
-
-    const auto baseIndex = static_cast<size_t>(sourcePosition_);
-    return baseIndex + 1 < available;
-}
-
-void DenoiseEngine::SharedLinearResampler::ensureChannelCount(size_t channelCount)
-{
-    inputQueues_.resize(channelCount);
-}
-
-void DenoiseEngine::SharedLinearResampler::discardConsumedInput()
-{
-    const auto discardCount = static_cast<size_t>(sourcePosition_);
-    if (discardCount > 0)
-    {
-        for (auto& inputQueue : inputQueues_)
-            inputQueue.discard(discardCount);
-
-        sourcePosition_ -= static_cast<double>(discardCount);
-    }
+    return available >= inputFramesNext_;
 }
 }
