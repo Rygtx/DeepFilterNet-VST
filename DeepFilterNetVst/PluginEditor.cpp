@@ -5,6 +5,8 @@
 
 namespace
 {
+using dfvst::localisation::TextId;
+
 const auto backgroundTop = juce::Colour::fromRGB(10, 16, 28);
 const auto backgroundBottom = juce::Colour::fromRGB(4, 8, 16);
 const auto backgroundGlow = juce::Colour::fromRGB(20, 54, 96);
@@ -20,9 +22,39 @@ const auto textMuted = juce::Colour::fromRGB(145, 165, 194);
 const auto textSubtle = juce::Colour::fromRGB(104, 126, 158);
 const auto shadowColour = juce::Colour::fromRGBA(0, 0, 0, 84);
 
-juce::String utf8Text(const char* text)
+int getLanguageChoiceId(const juce::String& languageCode)
 {
-    return juce::String::fromUTF8(text);
+    const auto normalisedCode = dfvst::localisation::normaliseLanguageCode(languageCode);
+    const auto& languages = dfvst::localisation::getAvailableLanguages();
+
+    for (size_t index = 0; index < languages.size(); ++index)
+    {
+        if (languages[index].code == normalisedCode)
+            return static_cast<int>(index) + 1;
+    }
+
+    return languages.empty() ? 0 : 1;
+}
+
+juce::String getLanguageCodeForChoiceId(int selectedId)
+{
+    const auto index = selectedId - 1;
+    const auto& languages = dfvst::localisation::getAvailableLanguages();
+
+    if (index < 0 || index >= static_cast<int>(languages.size()))
+        return {};
+
+    return languages[static_cast<size_t>(index)].code;
+}
+
+juce::String getLanguageBadgeText(const juce::String& languageCode)
+{
+    const auto normalisedCode = dfvst::localisation::normaliseLanguageCode(languageCode);
+
+    if (normalisedCode.startsWithIgnoreCase("zh"))
+        return "ZH";
+
+    return "EN";
 }
 
 class DiagnosticContent final : public juce::Component,
@@ -55,6 +87,11 @@ public:
         return getContentHeightForWidth(getPreferredWidth());
     }
 
+    void refreshNow()
+    {
+        refresh();
+    }
+
 private:
     void restoreViewPosition(juce::Point<int> previousPosition)
     {
@@ -67,6 +104,15 @@ private:
     class DiagnosticDisplay final : public juce::Component
     {
     public:
+        void setHeadingText(const juce::String& heading)
+        {
+            if (heading == headingText_)
+                return;
+
+            headingText_ = heading;
+            repaint();
+        }
+
         void setDiagnosticText(const juce::String& text)
         {
             if (text == text_)
@@ -97,7 +143,7 @@ private:
 
             graphics.setColour(accent);
             graphics.setFont(juce::FontOptions("Microsoft YaHei", 22.0f, juce::Font::bold));
-            graphics.drawText(utf8Text("运行信息"), area.removeFromTop(34), juce::Justification::centredLeft, false);
+            graphics.drawText(headingText_, area.removeFromTop(34), juce::Justification::centredLeft, false);
 
             area.removeFromTop(10);
             const auto sectionCount = juce::jmax(1, static_cast<int>(sections_.size()));
@@ -200,7 +246,7 @@ private:
 
         const DiagnosticSection& getSection(int index) const
         {
-            static const DiagnosticSection placeholder { utf8Text("运行信息"), {} };
+            static const DiagnosticSection placeholder {};
             return index >= 0 && index < static_cast<int>(sections_.size()) ? sections_[static_cast<size_t>(index)] : placeholder;
         }
 
@@ -263,6 +309,7 @@ private:
             return cardTopPadding + titleHeight + titleGap + static_cast<int>(section.entries.size()) * rowHeight + cardBottomPadding;
         }
 
+        juce::String headingText_ = "Diagnostics";
         juce::String text_;
         std::vector<DiagnosticSection> sections_;
     };
@@ -274,11 +321,16 @@ private:
 
     void refresh()
     {
-        const auto text = processor_.getDiagnosticText();
-        if (text != lastText_)
+        const auto language = processor_.getUiLanguage();
+        const auto heading = dfvst::localisation::tr(TextId::diagnosticsHeading, language);
+        const auto text = processor_.getDiagnosticText(language);
+
+        if (heading != lastHeading_ || text != lastText_)
         {
             const auto previousViewPosition = viewport_.getViewPosition();
+            lastHeading_ = heading;
             lastText_ = text;
+            display_.setHeadingText(lastHeading_);
             display_.setDiagnosticText(lastText_);
             updatePreferredSize();
             restoreViewPosition(previousViewPosition);
@@ -328,6 +380,7 @@ private:
     DeepFilterNetVstAudioProcessor& processor_;
     juce::Viewport viewport_;
     DiagnosticDisplay display_;
+    juce::String lastHeading_;
     juce::String lastText_;
 };
 }
@@ -610,7 +663,7 @@ class DeepFilterNetVstAudioProcessorEditor::DiagnosticWindow final : public juce
 {
 public:
     DiagnosticWindow(DeepFilterNetVstAudioProcessorEditor& owner, DeepFilterNetVstAudioProcessor& processor)
-        : juce::DocumentWindow(utf8Text("运行信息"),
+        : juce::DocumentWindow(dfvst::localisation::tr(TextId::diagnosticsWindowTitle, processor.getUiLanguage()),
                                panelColour,
                                juce::DocumentWindow::closeButton,
                                true),
@@ -650,21 +703,21 @@ DeepFilterNetVstAudioProcessorEditor::DeepFilterNetVstAudioProcessorEditor(DeepF
 {
     setLookAndFeel(&lookAndFeel_);
     setSize(468, 420);
+    processor_.addChangeListener(this);
 
     titleLabel_.setText(DeepFilterNetVstAudioProcessor::pluginDisplayName, juce::dontSendNotification);
     titleLabel_.setFont(juce::FontOptions(32.0f, juce::Font::bold));
     titleLabel_.setColour(juce::Label::textColourId, textStrong);
     addAndMakeVisible(titleLabel_);
 
-    subtitleLabel_.setText(utf8Text("语音降噪与后置滤波控制"), juce::dontSendNotification);
     subtitleLabel_.setFont(juce::FontOptions(13.5f, juce::Font::plain));
     subtitleLabel_.setColour(juce::Label::textColourId, textMuted);
     addAndMakeVisible(subtitleLabel_);
 
-    configureSlider(denoiseSlider_, denoiseLabel_, utf8Text("降噪强度"));
-    configureSlider(postSlider_, postLabel_, utf8Text("后置滤波"));
-    configureComboBox(reduceMaskComboBox_, reduceMaskLabel_, utf8Text("声道掩码合并"));
-    reduceMaskComboBox_.addItemList(DeepFilterNetVstAudioProcessor::getReduceMaskChoices(), 1);
+    configureSlider(denoiseSlider_, denoiseLabel_, {});
+    configureSlider(postSlider_, postLabel_, {});
+    configureComboBox(reduceMaskComboBox_, reduceMaskLabel_, {});
+    populateReduceMaskChoices();
     reduceMaskAttachment_ = std::make_unique<ComboBoxAttachment>(processor_.getParametersState(),
                                                                  DeepFilterNetVstAudioProcessor::reduceMaskParamId,
                                                                  reduceMaskComboBox_);
@@ -676,17 +729,19 @@ DeepFilterNetVstAudioProcessorEditor::DeepFilterNetVstAudioProcessorEditor(DeepF
         valueLabel->setColour(juce::Label::textColourId, accent);
         addAndMakeVisible(*valueLabel);
     }
-    configureButton(diagnosticButton_, utf8Text("运行信息"));
+    configureButton(diagnosticButton_, {});
     diagnosticButton_.onClick = [this] { showDiagnosticWindow(); };
 
     denoiseSlider_.onValueChange = [this] { updateValueLabels(); };
     postSlider_.onValueChange = [this] { updateValueLabels(); };
 
+    refreshLocalisedTexts();
     updateValueLabels();
 }
 
 DeepFilterNetVstAudioProcessorEditor::~DeepFilterNetVstAudioProcessorEditor()
 {
+    processor_.removeChangeListener(this);
     closeDiagnosticWindow();
     setLookAndFeel(nullptr);
 }
@@ -711,13 +766,18 @@ void DeepFilterNetVstAudioProcessorEditor::paint(juce::Graphics& graphics)
     const auto bottomPanel = juce::Rectangle<float>(24.0f, 184.0f, static_cast<float>(getWidth() - 48), 88.0f);
     const auto modePanel = juce::Rectangle<float>(24.0f, 280.0f, static_cast<float>(getWidth() - 48), 84.0f);
 
-    for (const auto& panel : { topPanel, bottomPanel, modePanel })
+    const auto paintPanel = [&](juce::Rectangle<float> panel)
     {
         graphics.setColour(shadowColour.withAlpha(0.42f));
         graphics.fillRoundedRectangle(panel.translated(0.0f, 6.0f), 20.0f);
 
-        juce::ColourGradient panelGradient(panelInner, panel.getX(), panel.getY(),
-                                           panelColour, panel.getRight(), panel.getBottom(), false);
+        juce::ColourGradient panelGradient(panelInner,
+                                           panel.getX(),
+                                           panel.getY(),
+                                           panelColour,
+                                           panel.getRight(),
+                                           panel.getBottom(),
+                                           false);
         graphics.setGradientFill(panelGradient);
         graphics.fillRoundedRectangle(panel, 20.0f);
 
@@ -725,28 +785,33 @@ void DeepFilterNetVstAudioProcessorEditor::paint(juce::Graphics& graphics)
         graphics.drawRoundedRectangle(panel, 20.0f, 1.0f);
 
         graphics.setColour(juce::Colours::white.withAlpha(0.035f));
-        graphics.drawLine(panel.getX() + 18.0f, panel.getY() + 12.0f, panel.getRight() - 18.0f, panel.getY() + 12.0f, 1.0f);
-    }
+        graphics.drawLine(panel.getX() + 18.0f,
+                          panel.getY() + 12.0f,
+                          panel.getRight() - 18.0f,
+                          panel.getY() + 12.0f,
+                          1.0f);
+    };
+
+    paintPanel(topPanel);
+    paintPanel(bottomPanel);
+    paintPanel(modePanel);
 
     graphics.setColour(accent.withAlpha(0.9f));
     graphics.fillRoundedRectangle(24.0f, 22.0f, 86.0f, 6.0f, 3.0f);
-
-    const auto badgeBounds = juce::Rectangle<int>(getWidth() - 222, 28, 72, 24);
-    graphics.setColour(accentSoft.withAlpha(0.7f));
-    graphics.fillRoundedRectangle(badgeBounds.toFloat(), 12.0f);
-    graphics.setColour(accentBright);
-    graphics.setFont(juce::FontOptions(13.0f, juce::Font::bold));
-    graphics.drawFittedText("VST", badgeBounds, juce::Justification::centred, 1);
+    paintLanguageButton(graphics);
 }
 
 void DeepFilterNetVstAudioProcessorEditor::resized()
 {
-    titleLabel_.setBounds(28, 18, getWidth() - 180, 34);
-    subtitleLabel_.setBounds(30, 50, getWidth() - 184, 20);
-
     const auto content = getLocalBounds().reduced(28, 86);
     const int cardWidth = content.getWidth();
     const int valueWidth = 94;
+
+    languageButtonBounds_ = { getWidth() - 190, 22, 38, 38 };
+    const int titleRight = languageButtonBounds_.getX() - 18;
+
+    titleLabel_.setBounds(28, 18, juce::jmax(120, titleRight - 28), 34);
+    subtitleLabel_.setBounds(30, 50, juce::jmax(120, titleRight - 30), 20);
 
     denoiseLabel_.setBounds(40, 96, 180, 22);
     denoiseValueLabel_.setBounds(getWidth() - 124, 96, valueWidth, 22);
@@ -756,15 +821,194 @@ void DeepFilterNetVstAudioProcessorEditor::resized()
     postValueLabel_.setBounds(getWidth() - 124, 192, valueWidth, 22);
     postSlider_.setBounds(36, 222, cardWidth - 12, 28);
 
-    reduceMaskLabel_.setBounds(40, 290, 180, 22);
+    reduceMaskLabel_.setBounds(40, 290, 220, 22);
     reduceMaskComboBox_.setBounds(36, 320, cardWidth - 12, 36);
     diagnosticButton_.setBounds(getWidth() - 144, 24, 108, 32);
+}
+
+void DeepFilterNetVstAudioProcessorEditor::mouseMove(const juce::MouseEvent& event)
+{
+    updateLanguageButtonState(event.position, false);
+}
+
+void DeepFilterNetVstAudioProcessorEditor::mouseExit(const juce::MouseEvent&)
+{
+    isLanguageButtonHovered_ = false;
+    isLanguageButtonPressed_ = false;
+    setMouseCursor(juce::MouseCursor::NormalCursor);
+    repaint(languageButtonBounds_);
+}
+
+void DeepFilterNetVstAudioProcessorEditor::mouseDown(const juce::MouseEvent& event)
+{
+    if (!event.mods.isLeftButtonDown())
+        return;
+
+    isLanguageButtonPressed_ = isLanguageButtonHit(event.position);
+    if (isLanguageButtonPressed_)
+        repaint(languageButtonBounds_);
+}
+
+void DeepFilterNetVstAudioProcessorEditor::mouseUp(const juce::MouseEvent& event)
+{
+    const auto shouldOpenLanguageMenu = isLanguageButtonPressed_ && isLanguageButtonHit(event.position);
+    isLanguageButtonPressed_ = false;
+    updateLanguageButtonState(event.position, false);
+
+    if (shouldOpenLanguageMenu)
+        showLanguageMenu();
+}
+
+void DeepFilterNetVstAudioProcessorEditor::changeListenerCallback(juce::ChangeBroadcaster* source)
+{
+    if (source == &processor_)
+        refreshLocalisedTexts();
 }
 
 void DeepFilterNetVstAudioProcessorEditor::updateValueLabels()
 {
     denoiseValueLabel_.setText(juce::String(denoiseSlider_.getValue(), 0) + " dB", juce::dontSendNotification);
     postValueLabel_.setText(juce::String(postSlider_.getValue(), 3), juce::dontSendNotification);
+}
+
+void DeepFilterNetVstAudioProcessorEditor::populateReduceMaskChoices()
+{
+    auto targetSelectedId = reduceMaskComboBox_.getSelectedId();
+
+    if (targetSelectedId == 0)
+        targetSelectedId = 1;
+
+    if (const auto* reduceMaskParam = processor_.getParametersState().getRawParameterValue(DeepFilterNetVstAudioProcessor::reduceMaskParamId))
+        targetSelectedId = juce::jlimit(1, 3, juce::roundToInt(reduceMaskParam->load()) + 1);
+
+    reduceMaskComboBox_.clear(juce::dontSendNotification);
+    reduceMaskComboBox_.addItemList(dfvst::localisation::getReduceMaskUiChoices(processor_.getUiLanguage()), 1);
+    reduceMaskComboBox_.setSelectedId(targetSelectedId, juce::dontSendNotification);
+}
+
+void DeepFilterNetVstAudioProcessorEditor::refreshLocalisedTexts()
+{
+    const auto language = processor_.getUiLanguage();
+
+    subtitleLabel_.setText(dfvst::localisation::tr(TextId::subtitle, language), juce::dontSendNotification);
+    denoiseLabel_.setText(dfvst::localisation::tr(TextId::denoiseLabel, language), juce::dontSendNotification);
+    postLabel_.setText(dfvst::localisation::tr(TextId::postFilterLabel, language), juce::dontSendNotification);
+    reduceMaskLabel_.setText(dfvst::localisation::tr(TextId::reduceMaskLabel, language), juce::dontSendNotification);
+    diagnosticButton_.setButtonText(dfvst::localisation::tr(TextId::diagnosticsButton, language));
+
+    populateReduceMaskChoices();
+
+    if (diagnosticWindow_ != nullptr)
+    {
+        diagnosticWindow_->setName(dfvst::localisation::tr(TextId::diagnosticsWindowTitle, language));
+        if (auto* diagnosticContent = dynamic_cast<DiagnosticContent*>(diagnosticWindow_->getContentComponent()))
+            diagnosticContent->refreshNow();
+    }
+
+    repaint();
+}
+
+void DeepFilterNetVstAudioProcessorEditor::paintLanguageButton(juce::Graphics& graphics) const
+{
+    const auto bounds = languageButtonBounds_.toFloat();
+    const auto circleBounds = juce::Rectangle<float>(bounds.getX() + 2.5f, bounds.getY() + 2.5f, 30.0f, 30.0f);
+    const auto badgeBounds = juce::Rectangle<float>(bounds.getRight() - 19.0f, bounds.getBottom() - 11.0f, 17.0f, 10.0f);
+    auto background = panelInner.withAlpha(0.96f);
+    auto outline = panelOutlineStrong;
+    auto globeColour = textStrong.withAlpha(0.95f);
+
+    if (isLanguageButtonPressed_)
+    {
+        background = accentSoft.withAlpha(0.94f);
+        outline = accent;
+        globeColour = juce::Colours::white;
+    }
+    else if (isLanguageButtonHovered_)
+    {
+        background = background.interpolatedWith(panelOutlineStrong, 0.18f);
+        outline = accent.withAlpha(0.92f);
+    }
+
+    juce::ColourGradient gradient(background.brighter(0.08f), circleBounds.getX(), circleBounds.getY(),
+                                  background.darker(0.12f), circleBounds.getRight(), circleBounds.getBottom(), false);
+    graphics.setGradientFill(gradient);
+    graphics.fillEllipse(circleBounds);
+
+    graphics.setColour(outline);
+    graphics.drawEllipse(circleBounds, isLanguageButtonHovered_ || isLanguageButtonPressed_ ? 1.5f : 1.1f);
+
+    const auto globeBounds = circleBounds.reduced(7.5f);
+    graphics.setColour(globeColour);
+    graphics.drawEllipse(globeBounds, 1.05f);
+    graphics.drawLine(globeBounds.getCentreX(), globeBounds.getY() + 1.0f,
+                      globeBounds.getCentreX(), globeBounds.getBottom() - 1.0f, 0.9f);
+    graphics.drawEllipse(globeBounds.reduced(globeBounds.getWidth() * 0.24f, 0.0f), 0.75f);
+    graphics.drawEllipse(globeBounds.reduced(0.0f, globeBounds.getHeight() * 0.24f), 0.75f);
+    graphics.drawLine(globeBounds.getX() + 1.0f, globeBounds.getCentreY(),
+                      globeBounds.getRight() - 1.0f, globeBounds.getCentreY(), 0.9f);
+
+    graphics.setColour(accent);
+    graphics.fillRoundedRectangle(badgeBounds, 5.0f);
+    graphics.setColour(backgroundTop.withAlpha(0.94f));
+    graphics.setFont(juce::FontOptions(7.8f, juce::Font::bold));
+    graphics.drawFittedText(getLanguageBadgeText(processor_.getUiLanguage()),
+                            badgeBounds.toNearestInt(),
+                            juce::Justification::centred,
+                            1,
+                            1.0f);
+}
+
+void DeepFilterNetVstAudioProcessorEditor::updateLanguageButtonState(juce::Point<float> position, bool isPressed)
+{
+    const auto isHovered = isLanguageButtonHit(position);
+    if (isLanguageButtonHovered_ == isHovered && isLanguageButtonPressed_ == isPressed)
+    {
+        setMouseCursor(isHovered ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+        return;
+    }
+
+    isLanguageButtonHovered_ = isHovered;
+    isLanguageButtonPressed_ = isPressed;
+    setMouseCursor(isHovered ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+    repaint(languageButtonBounds_);
+}
+
+bool DeepFilterNetVstAudioProcessorEditor::isLanguageButtonHit(juce::Point<float> position) const
+{
+    return languageButtonBounds_.contains(position.toInt());
+}
+
+void DeepFilterNetVstAudioProcessorEditor::showLanguageMenu()
+{
+    juce::PopupMenu menu;
+    int itemId = 1;
+
+    for (const auto& language : dfvst::localisation::getAvailableLanguages())
+    {
+        menu.addItem(itemId,
+                     language.displayName,
+                     true,
+                     itemId == getLanguageChoiceId(processor_.getUiLanguage()));
+        ++itemId;
+    }
+
+    auto options = juce::PopupMenu::Options()
+                       .withTargetComponent(this)
+                       .withTargetScreenArea(localAreaToGlobal(languageButtonBounds_))
+                       .withMinimumWidth(languageButtonBounds_.getWidth());
+
+    menu.showMenuAsync(options,
+                       [safeThis = juce::Component::SafePointer<DeepFilterNetVstAudioProcessorEditor>(this)](int selectedId)
+                       {
+                           if (safeThis == nullptr || selectedId == 0)
+                               return;
+
+                           if (const auto selectedLanguage = getLanguageCodeForChoiceId(selectedId);
+                               selectedLanguage.isNotEmpty())
+                           {
+                               safeThis->processor_.setUiLanguage(selectedLanguage);
+                           }
+                       });
 }
 
 void DeepFilterNetVstAudioProcessorEditor::configureSlider(juce::Slider& slider, juce::Label& label, const juce::String& title)
@@ -815,6 +1059,9 @@ void DeepFilterNetVstAudioProcessorEditor::showDiagnosticWindow()
     if (diagnosticWindow_ == nullptr)
         diagnosticWindow_ = std::make_unique<DiagnosticWindow>(*this, processor_);
 
+    diagnosticWindow_->setName(dfvst::localisation::tr(TextId::diagnosticsWindowTitle, processor_.getUiLanguage()));
+    if (auto* diagnosticContent = dynamic_cast<DiagnosticContent*>(diagnosticWindow_->getContentComponent()))
+        diagnosticContent->refreshNow();
     diagnosticWindow_->setVisible(true);
     diagnosticWindow_->toFront(true);
 }

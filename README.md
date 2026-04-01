@@ -17,7 +17,7 @@
 - 双格式输出：可同时生成 `VST2` 和 `VST3`。
 - 接近上游 stereo 路径：双声道不会先混成 mono，而是按多通道帧一起送入上游 `DfTract` runtime 处理。
 - 编译期内嵌 runtime 与模型：bridge 通过本地 path 依赖引用 `extern/DeepFilterNet/libDF`，上游默认模型会被编进 Rust 静态库，插件只链接本地生成的 `deepfilter_runtime_bridge.lib`。
-- JUCE 原生中文 GUI：支持“降噪强度”与“后置滤波”参数。
+- 基于嵌入式 JSON 语言文件的中英双语 GUI：`DeepFilterNetVst/Localisation/*.json` 会在构建时直接编进插件，支持在面板内切换 `English` / `中文`，语言按实例保存在宿主工程/预设状态中。
 - 自动重采样：宿主不是 `48 kHz` 时，插件内部会自动重采样到 `48 kHz` 后处理，再转回宿主采样率。
 
 ## 构建

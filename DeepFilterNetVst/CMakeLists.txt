@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 # 插件版本固定由源码文件维护；如需升级版本，请直接修改这里。
-set(DEEPFILTERNET_PLUGIN_VERSION "2026.4.1.2")
+set(DEEPFILTERNET_PLUGIN_VERSION "2026.4.2.1")
 
 if(NOT DEEPFILTERNET_PLUGIN_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$")
   message(FATAL_ERROR "DEEPFILTERNET_PLUGIN_VERSION must use the numeric format YYYY.M.D.N, e.g. 2026.3.29.1")
@@ -56,6 +56,17 @@ add_subdirectory("${JUCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/JUCE")
 
 juce_set_vst2_sdk_path("${VST2_SDK_COMPAT_DIR}")
 
+file(GLOB DEEPFILTERNET_LOCALISATION_FILES CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/Localisation/*.json"
+)
+
+juce_add_binary_data(DeepFilterNetVstLocalisationData
+  NAMESPACE DfvstLocalisationData
+  HEADER_NAME LocalisationBinaryData.h
+  SOURCES
+    ${DEEPFILTERNET_LOCALISATION_FILES}
+)
+
 juce_add_plugin(DeepFilterNetVst
   VERSION "${PROJECT_VERSION}"
   COMPANY_NAME "DeepFilterNet"
@@ -81,6 +92,8 @@ target_sources(DeepFilterNetVst
     DenoiseEngine.cpp
     DenoiseEngine.h
     DeepFilterRuntimeBridge.h
+    Localisation.cpp
+    Localisation.h
     PluginEditor.cpp
     PluginEditor.h
     PluginProcessor.cpp
@@ -108,6 +121,7 @@ target_compile_options(DeepFilterNetVst
 target_link_libraries(DeepFilterNetVst
   PRIVATE
     juce::juce_audio_utils
+    DeepFilterNetVstLocalisationData
     deepfilter_runtime_bridge
   PUBLIC
     juce::juce_recommended_config_flags

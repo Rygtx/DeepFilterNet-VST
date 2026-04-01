@@ -4,7 +4,8 @@
 
 #include <JuceHeader.h>
 
-class DeepFilterNetVstAudioProcessorEditor final : public juce::AudioProcessorEditor
+class DeepFilterNetVstAudioProcessorEditor final : public juce::AudioProcessorEditor,
+                                                   private juce::ChangeListener
 {
 public:
     explicit DeepFilterNetVstAudioProcessorEditor(DeepFilterNetVstAudioProcessor&);
@@ -12,6 +13,10 @@ public:
 
     void paint(juce::Graphics&) override;
     void resized() override;
+    void mouseMove(const juce::MouseEvent&) override;
+    void mouseExit(const juce::MouseEvent&) override;
+    void mouseDown(const juce::MouseEvent&) override;
+    void mouseUp(const juce::MouseEvent&) override;
 
 private:
     class AccentLookAndFeel final : public juce::LookAndFeel_V4
@@ -58,7 +63,14 @@ private:
 
     class DiagnosticWindow;
 
+    void changeListenerCallback(juce::ChangeBroadcaster* source) override;
     void updateValueLabels();
+    void populateReduceMaskChoices();
+    void refreshLocalisedTexts();
+    void showLanguageMenu();
+    void paintLanguageButton(juce::Graphics&) const;
+    void updateLanguageButtonState(juce::Point<float> position, bool isPressed);
+    bool isLanguageButtonHit(juce::Point<float> position) const;
     void configureSlider(juce::Slider& slider, juce::Label& label, const juce::String& title);
     void configureComboBox(juce::ComboBox& comboBox, juce::Label& label, const juce::String& title);
     void configureButton(juce::TextButton& button, const juce::String& text);
@@ -76,6 +88,9 @@ private:
     juce::Label postValueLabel_;
     juce::Label reduceMaskLabel_;
 
+    juce::Rectangle<int> languageButtonBounds_;
+    bool isLanguageButtonHovered_ = false;
+    bool isLanguageButtonPressed_ = false;
     juce::Slider denoiseSlider_;
     juce::Slider postSlider_;
     juce::ComboBox reduceMaskComboBox_;

@@ -1,13 +1,15 @@
 #pragma once
 
 #include "DenoiseEngine.h"
+#include "Localisation.h"
 
 #include <JuceHeader.h>
 #include <atomic>
 #include <cstdint>
 #include <memory>
 
-class DeepFilterNetVstAudioProcessor final : public juce::AudioProcessor
+class DeepFilterNetVstAudioProcessor final : public juce::AudioProcessor,
+                                             public juce::ChangeBroadcaster
 {
 public:
     DeepFilterNetVstAudioProcessor();
@@ -38,7 +40,9 @@ public:
 
     juce::AudioProcessorValueTreeState& getParametersState();
     double getCurrentSampleRateHz() const;
-    juce::String getDiagnosticText() const;
+    juce::String getUiLanguage() const;
+    void setUiLanguage(const juce::String& languageCode);
+    juce::String getDiagnosticText(const juce::String& languageCode) const;
     bool isSampleRateCompatible() const;
     bool isDenoiserReady() const;
     static juce::StringArray getReduceMaskChoices();
@@ -52,6 +56,7 @@ private:
     class SharedDiagnosticsPublisher;
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+    void initialiseUiLanguageState();
     void requestSharedDiagnosticsPublish();
     void updateDiagnosticSnapshot(double currentSampleRateHz, bool denoiserReady);
     void publishSharedDiagnostics() const;
@@ -69,6 +74,8 @@ private:
     std::atomic<int> lastPreparedBlockSizeSamples_ { 0 };
     std::atomic<double> lastProcessSampleRateHz_ { 0.0 };
     std::atomic<int> lastProcessBlockSizeSamples_ { 0 };
+    mutable juce::CriticalSection uiLanguageLock_;
+    juce::String uiLanguageCode_ { "en" };
     std::atomic<double> diagnosticCurrentSampleRateHz_ { 0.0 };
     std::atomic<bool> diagnosticDenoiserReady_ { false };
     int64_t consecutiveSilentInputSamples_ = 0;

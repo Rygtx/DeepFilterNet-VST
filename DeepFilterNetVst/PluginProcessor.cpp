@@ -15,38 +15,36 @@
 
 namespace
 {
+using dfvst::localisation::TextId;
+
 constexpr double targetSampleRate = 48000.0;
 constexpr float inputActivityThreshold = 1.0e-6f;
 constexpr double silentResetThresholdSeconds = 0.5;
 constexpr int sharedDiagnosticsRefreshIntervalMs = 250;
 constexpr int maxSharedDiagnosticInstances = 32;
 constexpr int64_t sharedDiagnosticMaxIdleMs = 10 * 60 * 1000;
+constexpr auto uiLanguageStateKey = "uiLanguage";
 
-juce::String utf8Text(const char* text)
-{
-    return juce::String::fromUTF8(text);
-}
-
-juce::String getWrapperTypeText(juce::AudioProcessor::WrapperType wrapperType)
+juce::String getWrapperTypeText(juce::AudioProcessor::WrapperType wrapperType, const juce::String& languageCode)
 {
     switch (wrapperType)
     {
-        case juce::AudioProcessor::wrapperType_Undefined:  return utf8Text("未知");
-        case juce::AudioProcessor::wrapperType_VST:        return utf8Text("VST");
-        case juce::AudioProcessor::wrapperType_VST3:       return utf8Text("VST3");
-        case juce::AudioProcessor::wrapperType_AudioUnit:  return utf8Text("Audio Unit");
-        case juce::AudioProcessor::wrapperType_AudioUnitv3:return utf8Text("Audio Unit v3");
-        case juce::AudioProcessor::wrapperType_AAX:        return utf8Text("AAX");
-        case juce::AudioProcessor::wrapperType_Standalone: return utf8Text("独立程序");
-        case juce::AudioProcessor::wrapperType_LV2:        return utf8Text("LV2");
+        case juce::AudioProcessor::wrapperType_Undefined:   return dfvst::localisation::tr(TextId::unknown, languageCode);
+        case juce::AudioProcessor::wrapperType_VST:         return "VST";
+        case juce::AudioProcessor::wrapperType_VST3:        return "VST3";
+        case juce::AudioProcessor::wrapperType_AudioUnit:   return "Audio Unit";
+        case juce::AudioProcessor::wrapperType_AudioUnitv3: return "Audio Unit v3";
+        case juce::AudioProcessor::wrapperType_AAX:         return "AAX";
+        case juce::AudioProcessor::wrapperType_Standalone:  return dfvst::localisation::tr(TextId::standalone, languageCode);
+        case juce::AudioProcessor::wrapperType_LV2:         return "LV2";
         default:                                           return juce::AudioProcessor::getWrapperTypeDescription(wrapperType);
     }
 }
 
-juce::String getHostText(const juce::PluginHostType& hostType)
+juce::String getHostText(const juce::PluginHostType& hostType, const juce::String& languageCode)
 {
     const juce::String description(hostType.getHostDescription());
-    return description.equalsIgnoreCase("Unknown") ? utf8Text("未知") : description;
+    return description.equalsIgnoreCase("Unknown") ? dfvst::localisation::tr(TextId::unknown, languageCode) : description;
 }
 
 bool hasRealInputSignal(const juce::AudioBuffer<float>& buffer, int inputChannelCount)
@@ -100,10 +98,7 @@ uint64_t createInstanceId(uint32_t processId, uint32_t instanceSerial)
 
 juce::String formatInstanceTag(uint32_t processId, uint32_t instanceSerial)
 {
-    return utf8Text("PID ")
-           + juce::String(static_cast<int>(processId))
-           + utf8Text(" / #")
-           + juce::String(static_cast<int>(instanceSerial));
+    return "PID " + juce::String(static_cast<int>(processId)) + " / #" + juce::String(static_cast<int>(instanceSerial));
 }
 
 juce::String formatInstanceId(uint64_t instanceId)
@@ -469,6 +464,7 @@ DeepFilterNetVstAudioProcessor::DeepFilterNetVstAudioProcessor()
     reduceMaskParam_ = parameters_.getRawParameterValue(reduceMaskParamId);
     instanceSerial_ = allocateInstanceSerial();
     instanceId_ = createInstanceId(getCurrentProcessIdValue(), instanceSerial_);
+    initialiseUiLanguageState();
     updateDiagnosticSnapshot(getSampleRate(), false);
     sharedDiagnosticsPublisher_ = std::make_unique<SharedDiagnosticsPublisher>(*this);
     requestSharedDiagnosticsPublish();
@@ -651,7 +647,7 @@ void DeepFilterNetVstAudioProcessor::setCurrentProgram(int index)
 const juce::String DeepFilterNetVstAudioProcessor::getProgramName(int index)
 {
     juce::ignoreUnused(index);
-    return utf8Text("默认");
+    return "Default";
 }
 
 void DeepFilterNetVstAudioProcessor::changeProgramName(int index, const juce::String& newName)
@@ -674,12 +670,45 @@ void DeepFilterNetVstAudioProcessor::setStateInformation(const void* data, int s
     if (!xmlState->hasTagName(parameters_.state.getType()))
         return;
 
+    const auto previousLanguage = getUiLanguage();
     parameters_.replaceState(juce::ValueTree::fromXml(*xmlState));
+    initialiseUiLanguageState();
+
+    if (getUiLanguage() != previousLanguage)
+        sendChangeMessage();
 }
 
 juce::AudioProcessorValueTreeState& DeepFilterNetVstAudioProcessor::getParametersState()
 {
     return parameters_;
+}
+
+juce::String DeepFilterNetVstAudioProcessor::getUiLanguage() const
+{
+    const juce::ScopedLock lock(uiLanguageLock_);
+    return uiLanguageCode_;
+}
+
+void DeepFilterNetVstAudioProcessor::setUiLanguage(const juce::String& languageCode)
+{
+    const auto normalisedLanguage = dfvst::localisation::normaliseLanguageCode(languageCode);
+    if (normalisedLanguage.isEmpty())
+        return;
+
+    const auto currentLanguage = getUiLanguage();
+    const auto storedLanguage = parameters_.state.getProperty(uiLanguageStateKey).toString();
+
+    if (currentLanguage == normalisedLanguage && storedLanguage == normalisedLanguage)
+        return;
+
+    {
+        const juce::ScopedLock lock(uiLanguageLock_);
+        uiLanguageCode_ = normalisedLanguage;
+    }
+
+    parameters_.state.setProperty(uiLanguageStateKey, normalisedLanguage, nullptr);
+    updateHostDisplay(ChangeDetails {}.withNonParameterStateChanged(true));
+    sendChangeMessage();
 }
 
 double DeepFilterNetVstAudioProcessor::getCurrentSampleRateHz() const
@@ -697,10 +726,11 @@ bool DeepFilterNetVstAudioProcessor::isDenoiserReady() const
     return diagnosticDenoiserReady_.load();
 }
 
-juce::String DeepFilterNetVstAudioProcessor::getDiagnosticText() const
+juce::String DeepFilterNetVstAudioProcessor::getDiagnosticText(const juce::String& languageCode) const
 {
     juce::StringArray lines;
     const juce::PluginHostType hostType;
+    const auto normalisedLanguage = dfvst::localisation::normaliseLanguageCode(languageCode);
     auto sharedEntries = SharedDiagnosticsMapping::getInstance().readSnapshots();
     std::sort(sharedEntries.begin(),
               sharedEntries.end(),
@@ -718,24 +748,26 @@ juce::String DeepFilterNetVstAudioProcessor::getDiagnosticText() const
                   return left.instanceSerial < right.instanceSerial;
               });
 
-    lines.add(makeSectionHeader(utf8Text("本地实例 ") + formatInstanceTag(getCurrentProcessIdValue(), instanceSerial_)));
-    lines.add(utf8Text("实例 ID：") + formatInstanceId(instanceId_));
-    lines.add(utf8Text("进程号：") + juce::String(static_cast<int>(getCurrentProcessIdValue())));
-    lines.add(utf8Text("宿主：") + getHostText(hostType));
-    lines.add(utf8Text("包装：") + getWrapperTypeText(wrapperType));
-    lines.add(utf8Text("准备处理次数：") + juce::String(prepareToPlayCount_.load()));
-    lines.add(utf8Text("处理回调次数：") + juce::String(processBlockCount_.load()));
-    lines.add(utf8Text("释放资源次数：") + juce::String(releaseResourcesCount_.load()));
-    lines.add(utf8Text("最近准备处理：")
+    lines.add(makeSectionHeader(dfvst::localisation::tr(TextId::localInstanceSection, normalisedLanguage)
+                                + formatInstanceTag(getCurrentProcessIdValue(), instanceSerial_)));
+    lines.add(dfvst::localisation::tr(TextId::instanceIdLabel, normalisedLanguage) + formatInstanceId(instanceId_));
+    lines.add(dfvst::localisation::tr(TextId::processIdLabel, normalisedLanguage) + juce::String(static_cast<int>(getCurrentProcessIdValue())));
+    lines.add(dfvst::localisation::tr(TextId::hostLabel, normalisedLanguage) + getHostText(hostType, normalisedLanguage));
+    lines.add(dfvst::localisation::tr(TextId::wrapperLabel, normalisedLanguage) + getWrapperTypeText(wrapperType, normalisedLanguage));
+    lines.add(dfvst::localisation::tr(TextId::prepareToPlayCountLabel, normalisedLanguage) + juce::String(prepareToPlayCount_.load()));
+    lines.add(dfvst::localisation::tr(TextId::processBlockCountLabel, normalisedLanguage) + juce::String(processBlockCount_.load()));
+    lines.add(dfvst::localisation::tr(TextId::releaseResourcesCountLabel, normalisedLanguage) + juce::String(releaseResourcesCount_.load()));
+    lines.add(dfvst::localisation::tr(TextId::lastPreparedLabel, normalisedLanguage)
               + juce::String(lastPreparedSampleRateHz_.load(), 1)
-              + utf8Text(" Hz / ")
+              + " Hz / "
               + juce::String(lastPreparedBlockSizeSamples_.load()));
-    lines.add(utf8Text("最近处理回调：")
+    lines.add(dfvst::localisation::tr(TextId::lastProcessedLabel, normalisedLanguage)
               + juce::String(lastProcessSampleRateHz_.load(), 1)
-              + utf8Text(" Hz / ")
+              + " Hz / "
               + juce::String(lastProcessBlockSizeSamples_.load()));
-    lines.add(utf8Text("当前采样率查询值：") + juce::String(getCurrentSampleRateHz(), 1));
-    lines.add(utf8Text("运行时就绪：") + juce::String(isDenoiserReady() ? utf8Text("是") : utf8Text("否")));
+    lines.add(dfvst::localisation::tr(TextId::currentSampleRateQueriedLabel, normalisedLanguage) + juce::String(getCurrentSampleRateHz(), 1));
+    lines.add(dfvst::localisation::tr(TextId::runtimeReadyLabel, normalisedLanguage)
+              + dfvst::localisation::tr(isDenoiserReady() ? TextId::yes : TextId::no, normalisedLanguage));
 
     if (sharedEntries.empty())
     {
@@ -745,33 +777,52 @@ juce::String DeepFilterNetVstAudioProcessor::getDiagnosticText() const
     for (const auto& sharedEntry : sharedEntries)
     {
         lines.add({});
-        lines.add(makeSectionHeader(utf8Text("共享实例 ")
+        lines.add(makeSectionHeader(dfvst::localisation::tr(TextId::sharedInstanceSection, normalisedLanguage)
                                     + formatInstanceTag(sharedEntry.writerProcessId, sharedEntry.instanceSerial)
-                                    + (sharedEntry.instanceId == instanceId_ ? utf8Text("（本地）") : juce::String())));
-        lines.add(utf8Text("实例 ID：") + formatInstanceId(sharedEntry.instanceId));
-        lines.add(utf8Text("进程号：") + juce::String(static_cast<int>(sharedEntry.writerProcessId)));
-        lines.add(utf8Text("包装：")
-                  + getWrapperTypeText(static_cast<juce::AudioProcessor::WrapperType>(sharedEntry.wrapperType)));
-        lines.add(utf8Text("准备处理次数：") + juce::String(sharedEntry.prepareCount));
-        lines.add(utf8Text("处理回调次数：") + juce::String(sharedEntry.processCount));
-        lines.add(utf8Text("释放资源次数：") + juce::String(sharedEntry.releaseCount));
-        lines.add(utf8Text("最近准备处理：")
+                                    + (sharedEntry.instanceId == instanceId_
+                                           ? dfvst::localisation::tr(TextId::localInstanceSuffix, normalisedLanguage)
+                                           : juce::String())));
+        lines.add(dfvst::localisation::tr(TextId::instanceIdLabel, normalisedLanguage) + formatInstanceId(sharedEntry.instanceId));
+        lines.add(dfvst::localisation::tr(TextId::processIdLabel, normalisedLanguage) + juce::String(static_cast<int>(sharedEntry.writerProcessId)));
+        lines.add(dfvst::localisation::tr(TextId::wrapperLabel, normalisedLanguage)
+                  + getWrapperTypeText(static_cast<juce::AudioProcessor::WrapperType>(sharedEntry.wrapperType), normalisedLanguage));
+        lines.add(dfvst::localisation::tr(TextId::prepareToPlayCountLabel, normalisedLanguage) + juce::String(sharedEntry.prepareCount));
+        lines.add(dfvst::localisation::tr(TextId::processBlockCountLabel, normalisedLanguage) + juce::String(sharedEntry.processCount));
+        lines.add(dfvst::localisation::tr(TextId::releaseResourcesCountLabel, normalisedLanguage) + juce::String(sharedEntry.releaseCount));
+        lines.add(dfvst::localisation::tr(TextId::lastPreparedLabel, normalisedLanguage)
                   + juce::String(sharedEntry.lastPreparedSampleRateHz, 1)
-                  + utf8Text(" Hz / ")
+                  + " Hz / "
                   + juce::String(sharedEntry.lastPreparedBlockSizeSamples));
-        lines.add(utf8Text("最近处理回调：")
+        lines.add(dfvst::localisation::tr(TextId::lastProcessedLabel, normalisedLanguage)
                   + juce::String(sharedEntry.lastProcessSampleRateHz, 1)
-                  + utf8Text(" Hz / ")
+                  + " Hz / "
                   + juce::String(sharedEntry.lastProcessBlockSizeSamples));
-        lines.add(utf8Text("当前采样率：") + juce::String(sharedEntry.currentSampleRateHz, 1));
-        lines.add(utf8Text("运行时就绪：") + juce::String(sharedEntry.denoiserReady != 0 ? utf8Text("是") : utf8Text("否")));
-        lines.add(utf8Text("最近更新时间：")
+        lines.add(dfvst::localisation::tr(TextId::currentSampleRateLabel, normalisedLanguage) + juce::String(sharedEntry.currentSampleRateHz, 1));
+        lines.add(dfvst::localisation::tr(TextId::runtimeReadyLabel, normalisedLanguage)
+                  + dfvst::localisation::tr(sharedEntry.denoiserReady != 0 ? TextId::yes : TextId::no, normalisedLanguage));
+        lines.add(dfvst::localisation::tr(TextId::lastUpdatedLabel, normalisedLanguage)
                   + (sharedEntry.lastUpdateTimeMs > 0
                          ? juce::Time(sharedEntry.lastUpdateTimeMs).toString(true, true, true, true)
-                         : utf8Text("无")));
+                         : dfvst::localisation::tr(TextId::none, normalisedLanguage)));
     }
 
     return lines.joinIntoString("\n");
+}
+
+void DeepFilterNetVstAudioProcessor::initialiseUiLanguageState()
+{
+    const auto storedLanguage = dfvst::localisation::normaliseLanguageCode(parameters_.state.getProperty(uiLanguageStateKey).toString());
+    const auto resolvedLanguage = storedLanguage.isNotEmpty()
+                                      ? storedLanguage
+                                      : dfvst::localisation::resolveSystemLanguage();
+
+    {
+        const juce::ScopedLock lock(uiLanguageLock_);
+        uiLanguageCode_ = resolvedLanguage;
+    }
+
+    if (parameters_.state.getProperty(uiLanguageStateKey).toString() != resolvedLanguage)
+        parameters_.state.setProperty(uiLanguageStateKey, resolvedLanguage, nullptr);
 }
 
 void DeepFilterNetVstAudioProcessor::requestSharedDiagnosticsPublish()
@@ -813,9 +864,9 @@ void DeepFilterNetVstAudioProcessor::removeSharedDiagnostics() const
 juce::StringArray DeepFilterNetVstAudioProcessor::getReduceMaskChoices()
 {
     return {
-        utf8Text("独立（NONE）"),
-        utf8Text("最大值（MAX）"),
-        utf8Text("平均值（MEAN）")
+        "Independent (NONE)",
+        "Maximum (MAX)",
+        "Mean (MEAN)"
     };
 }
 
@@ -825,7 +876,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout DeepFilterNetVstAudioProcess
 
     parameters.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID(attenParamId, 1),
-        utf8Text("降噪强度"),
+        "Denoise Amount",
         juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f),
         100.0f,
         juce::AudioParameterFloatAttributes().withStringFromValueFunction(
@@ -836,7 +887,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout DeepFilterNetVstAudioProcess
 
     parameters.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID(postParamId, 1),
-        utf8Text("后置滤波"),
+        "Post Filter",
         juce::NormalisableRange<float>(0.0f, 0.05f, 0.0005f),
         0.0f,
         juce::AudioParameterFloatAttributes().withStringFromValueFunction(
@@ -847,7 +898,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout DeepFilterNetVstAudioProcess
 
     parameters.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID(reduceMaskParamId, 1),
-        utf8Text("声道掩码合并"),
+        "Channel Mask Merge",
         getReduceMaskChoices(),
         0));
 
