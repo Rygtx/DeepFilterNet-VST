@@ -65,7 +65,12 @@ bool hasRealInputSignal(const juce::AudioBuffer<float>& buffer, int inputChannel
 
 bool shouldDelayRuntimeInitialization(juce::AudioProcessor::WrapperType wrapperType)
 {
-    return wrapperType == juce::AudioProcessor::wrapperType_VST;
+    // 对 VST2 与 VST3 都启用"延迟到首次有真实输入再初始化运行时"的策略:
+    //   - 静音轨不会加载 DeepFilterNet 模型,显著降低空闲开销
+    //   - 长时间静音(>0.5s)后自动 reset 引擎,释放推理状态
+    // 这对 Nuendo/Cubase 这种会同时挂多个实例的宿主尤其重要。
+    return wrapperType == juce::AudioProcessor::wrapperType_VST
+        || wrapperType == juce::AudioProcessor::wrapperType_VST3;
 }
 
 int64_t getSilentResetThresholdSamples(double sampleRate)
