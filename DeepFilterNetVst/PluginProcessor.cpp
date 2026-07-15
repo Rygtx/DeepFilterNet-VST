@@ -544,6 +544,23 @@ bool DeepFilterNetVstAudioProcessor::isBusesLayoutSupported(const BusesLayout& l
     return output == juce::AudioChannelSet::mono() || output == juce::AudioChannelSet::stereo();
 }
 
+namespace {
+// 检测并修复无效数据(NaN/Inf),防止 Studio One 检测到非法浮点值后停用插件。
+void sanitizeOutputBuffer(juce::AudioBuffer<float>& buffer, int numChannels, int numSamples)
+{
+    for (int channel = 0; channel < numChannels; ++channel)
+    {
+        auto* channelData = buffer.getWritePointer(channel);
+        for (int sampleIndex = 0; sampleIndex < numSamples; ++sampleIndex)
+        {
+            float& sample = channelData[sampleIndex];
+            if (std::isnan(sample) || std::isinf(sample))
+                sample = 0.0f;
+        }
+    }
+}
+}
+
 void DeepFilterNetVstAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     juce::ignoreUnused(midiMessages);
@@ -604,6 +621,8 @@ void DeepFilterNetVstAudioProcessor::processBlock(juce::AudioBuffer<float>& buff
     }
 
     engine_.process(buffer);
+    // 检测并修复无效数据(NaN/Inf),防止 Studio One 停用插件
+    sanitizeOutputBuffer(buffer, buffer.getNumChannels(), buffer.getNumSamples());
     // 不在 processBlock 中调用 setLatencySamples:VST2/VST3 均启用了延迟初始化策略,
     // 此处调用会因引擎懒初始化导致延迟值变化,触发 VST3 restartComponent 死循环。
     updateDiagnostics();
