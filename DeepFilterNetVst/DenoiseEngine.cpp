@@ -151,7 +151,14 @@ void DenoiseEngine::process(juce::AudioBuffer<float>& buffer)
             channelState.inputQueue.pop(frameInput, static_cast<size_t>(frameSize_));
         }
 
-        dfvst_process_frame(state_, frameInput_.data(), frameOutput_.data());
+        const auto processResult = dfvst_process_frame(state_, frameInput_.data(), frameOutput_.data());
+        if (processResult < 0.0f)
+        {
+            // 推理失败时 output 内容不确定,可能含 NaN/Inf。
+            // 清零防止无效数据进入内部队列与重采样器,污染后续输出。
+            // Studio One 检测到 NaN/Inf 会强制停用插件。
+            std::fill(frameOutput_.begin(), frameOutput_.end(), 0.0f);
+        }
 
         for (int channel = 0; channel < numChannels; ++channel)
         {
