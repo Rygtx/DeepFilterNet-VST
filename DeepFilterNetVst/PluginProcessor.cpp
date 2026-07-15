@@ -132,6 +132,7 @@ struct SharedDiagnosticEntry
     int lastProcessBlockSizeSamples = 0;
     double currentSampleRateHz = 0.0;
     int denoiserReady = 0;
+    int latencySamples = 0;
     int64_t lastUpdateTimeMs = 0;
 };
 
@@ -169,6 +170,7 @@ struct SharedDiagnosticEntryState
     int32_t lastProcessBlockSizeSamples = 0;
     double currentSampleRateHz = 0.0;
     int32_t denoiserReady = 0;
+    int32_t latencySamples = 0;
     int64_t lastUpdateTimeMs = 0;
 };
 
@@ -181,7 +183,7 @@ struct SharedDiagnosticState
 };
 
 constexpr uint32_t sharedDiagnosticMagic = 0x44464654; // DFFT
-constexpr uint32_t sharedDiagnosticVersion = 2;
+constexpr uint32_t sharedDiagnosticVersion = 3;
 
 class SharedDiagnosticsMapping
 {
@@ -203,7 +205,8 @@ public:
                        double lastProcessSampleRateHz,
                        int lastProcessBlockSizeSamples,
                        double currentSampleRateHz,
-                       bool denoiserReady)
+                       bool denoiserReady,
+                       int latencySamples)
     {
         if (state_ == nullptr)
             return;
@@ -230,6 +233,7 @@ public:
             entry->lastProcessBlockSizeSamples = lastProcessBlockSizeSamples;
             entry->currentSampleRateHz = currentSampleRateHz;
             entry->denoiserReady = denoiserReady ? 1 : 0;
+            entry->latencySamples = latencySamples;
             entry->lastUpdateTimeMs = nowMs;
         }
 
@@ -284,6 +288,7 @@ public:
                     candidate.lastProcessBlockSizeSamples = sourceEntry.lastProcessBlockSizeSamples;
                     candidate.currentSampleRateHz = sourceEntry.currentSampleRateHz;
                     candidate.denoiserReady = sourceEntry.denoiserReady;
+                    candidate.latencySamples = sourceEntry.latencySamples;
                     candidate.lastUpdateTimeMs = sourceEntry.lastUpdateTimeMs;
                     entries.push_back(candidate);
                 }
@@ -810,6 +815,9 @@ juce::String DeepFilterNetVstAudioProcessor::getDiagnosticText(const juce::Strin
                   + juce::String(sharedEntry.lastProcessSampleRateHz, 1)
                   + " Hz / "
                   + juce::String(sharedEntry.lastProcessBlockSizeSamples));
+        lines.add(dfvst::localisation::tr(TextId::latencyLabel, normalisedLanguage)
+                  + juce::String(sharedEntry.latencySamples)
+                  + " samples");
         lines.add(dfvst::localisation::tr(TextId::currentSampleRateLabel, normalisedLanguage) + juce::String(sharedEntry.currentSampleRateHz, 1));
         lines.add(dfvst::localisation::tr(TextId::runtimeReadyLabel, normalisedLanguage)
                   + dfvst::localisation::tr(sharedEntry.denoiserReady != 0 ? TextId::yes : TextId::no, normalisedLanguage));
@@ -866,7 +874,8 @@ void DeepFilterNetVstAudioProcessor::publishSharedDiagnostics() const
                                                           lastProcessSampleRateHz_.load(),
                                                           lastProcessBlockSizeSamples_.load(),
                                                           currentSampleRateHz,
-                                                          denoiserReady);
+                                                          denoiserReady,
+                                                          getLatencySamples());
 }
 
 void DeepFilterNetVstAudioProcessor::removeSharedDiagnostics() const
