@@ -573,8 +573,8 @@ void DeepFilterNetVstAudioProcessor::processBlock(juce::AudioBuffer<float>& buff
     {
         if (!engine_.isReady())
         {
-            // 延迟已在 prepareToPlay 中设为预期值,此处不再调用 setLatencySamples。
-            // 调用会触发 VST3 restartComponent → Nuendo deactivate/reactivate 死循环。
+            // 引擎未就绪时 getLatencySamples() 返回 0,调用会覆盖 prepareToPlay 设的预估值,
+            // 造成延迟抖动。保持预估值,待引擎就绪后在后续路径修正。
             updateDiagnostics();
             return;
         }
@@ -593,6 +593,9 @@ void DeepFilterNetVstAudioProcessor::processBlock(juce::AudioBuffer<float>& buff
         if (engineResetForCurrentSilence_)
         {
             buffer.clear();
+            // VST2: prepareToPlay 报告的是预估值(不含 resampler 延迟),
+            // 引擎就绪后在此修正为真实值。VST3 不会进入此分支。
+            setLatencySamples(engine_.getLatencySamples());
             updateDiagnostics();
             return;
         }
@@ -604,8 +607,11 @@ void DeepFilterNetVstAudioProcessor::processBlock(juce::AudioBuffer<float>& buff
     }
 
     engine_.process(buffer);
-    // 不在 processBlock 中调用 setLatencySamples:延迟已在 prepareToPlay 中设为预期值,
-    // 此处调用会因引擎懒初始化导致延迟值变化,触发 VST3 restartComponent 死循环。
+    // VST2 延迟了运行时初始化,prepareToPlay 报告的是预估值(不含 resampler 延迟),
+    // 引擎就绪后在此修正为真实值。VST3 在 prepareToPlay 已设准确值,此处不调用,
+    // 避免触发 restartComponent → Nuendo deactivate/reactivate 死循环。
+    if (shouldDelayRuntimeInitialization(wrapperType))
+        setLatencySamples(engine_.getLatencySamples());
     updateDiagnostics();
 }
 
