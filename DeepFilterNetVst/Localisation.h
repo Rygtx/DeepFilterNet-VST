@@ -31,6 +31,7 @@ enum class TextId
     releaseResourcesCountLabel,
     lastPreparedLabel,
     lastProcessedLabel,
+    latencyLabel,
     currentSampleRateQueriedLabel,
     currentSampleRateLabel,
     runtimeReadyLabel,

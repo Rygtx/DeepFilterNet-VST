@@ -27,6 +27,10 @@ public:
     bool isReady() const;
     int getLatencySamples() const;
 
+    // 在引擎未初始化时计算预期延迟,供 prepareToPlay 提前向宿主报告正确的延迟值。
+    // 避免 processBlock 中懒初始化导致延迟从 0→实际值变化,触发 VST3 restartComponent 死循环。
+    static int getExpectedLatencySamples(double sampleRate);
+
 private:
     class FloatQueue
     {
@@ -104,6 +108,7 @@ private:
     void resizeChannelBuffers(ChannelState& channelState);
 
     static constexpr double fallbackTargetSampleRate = 48000.0;
+    static constexpr int deepFilterNetFrameSize = 512; // DeepFilterNet3 模型固定帧长
     static constexpr size_t queueReserveMultiplier = 8;
     static constexpr int defaultReduceMask = 0; // ReduceMask::NONE
 

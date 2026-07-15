@@ -500,7 +500,9 @@ void DeepFilterNetVstAudioProcessor::prepareToPlay(double sampleRate, int sample
     if (shouldDelayRuntimeInitialization(wrapperType))
     {
         engine_.release();
-        setLatencySamples(0);
+        // 提前报告预期延迟(而非 0),避免 processBlock 中懒初始化后延迟从 0→实际值变化,
+        // 触发 VST3 restartComponent → Nuendo deactivate/reactivate 死循环。
+        setLatencySamples(dfvst::DenoiseEngine::getExpectedLatencySamples(sampleRate));
     }
     else
     {
@@ -519,7 +521,9 @@ void DeepFilterNetVstAudioProcessor::releaseResources()
     consecutiveSilentInputSamples_ = 0;
     engineResetForCurrentSilence_ = false;
     engine_.release();
-    setLatencySamples(0);
+    // 不调用 setLatencySamples(0):延迟是算法的固有属性,不因资源释放而改变。
+    // 若此处设为 0,prepareToPlay 再设回 1025 时会触发 VST3 restartComponent,
+    // 形成 deactivate→release(0)→activate→prepare(1025)→restart→deactivate 死循环。
     updateDiagnosticSnapshot(getSampleRate(), false);
     requestSharedDiagnosticsPublish();
 }
@@ -564,7 +568,8 @@ void DeepFilterNetVstAudioProcessor::processBlock(juce::AudioBuffer<float>& buff
     {
         if (!engine_.isReady())
         {
-            setLatencySamples(engine_.getLatencySamples());
+            // 延迟已在 prepareToPlay 中设为预期值,此处不再调用 setLatencySamples。
+            // 调用会触发 VST3 restartComponent → Nuendo deactivate/reactivate 死循环。
             updateDiagnostics();
             return;
         }
@@ -583,7 +588,6 @@ void DeepFilterNetVstAudioProcessor::processBlock(juce::AudioBuffer<float>& buff
         if (engineResetForCurrentSilence_)
         {
             buffer.clear();
-            setLatencySamples(engine_.getLatencySamples());
             updateDiagnostics();
             return;
         }
@@ -595,7 +599,8 @@ void DeepFilterNetVstAudioProcessor::processBlock(juce::AudioBuffer<float>& buff
     }
 
     engine_.process(buffer);
-    setLatencySamples(engine_.getLatencySamples());
+    // 不在 processBlock 中调用 setLatencySamples:延迟已在 prepareToPlay 中设为预期值,
+    // 此处调用会因引擎懒初始化导致延迟值变化,触发 VST3 restartComponent 死循环。
     updateDiagnostics();
 }
 
@@ -770,6 +775,9 @@ juce::String DeepFilterNetVstAudioProcessor::getDiagnosticText(const juce::Strin
               + juce::String(lastProcessSampleRateHz_.load(), 1)
               + " Hz / "
               + juce::String(lastProcessBlockSizeSamples_.load()));
+    lines.add(dfvst::localisation::tr(TextId::latencyLabel, normalisedLanguage)
+              + juce::String(getLatencySamples())
+              + " samples");
     lines.add(dfvst::localisation::tr(TextId::currentSampleRateQueriedLabel, normalisedLanguage) + juce::String(getCurrentSampleRateHz(), 1));
     lines.add(dfvst::localisation::tr(TextId::runtimeReadyLabel, normalisedLanguage)
               + dfvst::localisation::tr(isDenoiserReady() ? TextId::yes : TextId::no, normalisedLanguage));

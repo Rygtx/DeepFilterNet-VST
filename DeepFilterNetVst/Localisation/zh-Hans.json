@@ -26,6 +26,7 @@
     "releaseResourcesCountLabel": "释放资源次数：",
     "lastPreparedLabel": "最近准备处理：",
     "lastProcessedLabel": "最近处理回调：",
+    "latencyLabel": "延迟：",
     "currentSampleRateQueriedLabel": "当前采样率查询值：",
     "currentSampleRateLabel": "当前采样率：",
     "runtimeReadyLabel": "运行时就绪：",

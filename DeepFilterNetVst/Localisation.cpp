@@ -41,6 +41,7 @@ juce::String getTextKey(TextId id)
         case TextId::releaseResourcesCountLabel:   return "releaseResourcesCountLabel";
         case TextId::lastPreparedLabel:            return "lastPreparedLabel";
         case TextId::lastProcessedLabel:           return "lastProcessedLabel";
+        case TextId::latencyLabel:                 return "latencyLabel";
         case TextId::currentSampleRateQueriedLabel:return "currentSampleRateQueriedLabel";
         case TextId::currentSampleRateLabel:       return "currentSampleRateLabel";
         case TextId::runtimeReadyLabel:            return "runtimeReadyLabel";

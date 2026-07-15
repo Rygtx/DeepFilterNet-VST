@@ -242,8 +242,22 @@ int DenoiseEngine::getLatencySamples() const
     return juce::jmax(0,
                       juce::roundToInt(std::ceil(modelLatencyHostSamples
                                                  + inputResamplerDelayHostSamples
-                                                 + outputResamplerDelayHostSamples))
-                          + 1);
+                                                 + outputResamplerDelayHostSamples)));
+}
+
+int DenoiseEngine::getExpectedLatencySamples(double sampleRate)
+{
+    if (sampleRate <= 0.0)
+        return 0;
+
+    // DeepFilterNet3 模型帧长与运行采样率是固定值,无需初始化引擎即可计算延迟。
+    const auto modelLatencyHostSamples =
+        (static_cast<double>(deepFilterNetFrameSize) * sampleRate) / fallbackTargetSampleRate;
+
+    // 48kHz 时 resampler 为 pass-through,延迟为 0。
+    // 非 48kHz 时 resampler 延迟未知(需实际创建),此处按 0 估算。
+    return juce::jmax(0,
+                      juce::roundToInt(std::ceil(modelLatencyHostSamples)));
 }
 
 bool DenoiseEngine::ensureInitialized(int channelCount)

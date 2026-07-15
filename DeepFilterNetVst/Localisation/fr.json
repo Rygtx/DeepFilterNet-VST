@@ -26,6 +26,7 @@
     "releaseResourcesCountLabel": "Nombre de releaseResources : ",
     "lastPreparedLabel": "Dernière préparation : ",
     "lastProcessedLabel": "Dernier traitement : ",
+    "latencyLabel": "Latence : ",
     "currentSampleRateQueriedLabel": "Requête de fréquence d'échantillonnage actuelle : ",
     "currentSampleRateLabel": "Fréquence d'échantillonnage actuelle : ",
     "runtimeReadyLabel": "Prêt à l'exécution : ",
